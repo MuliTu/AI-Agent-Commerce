@@ -4,9 +4,9 @@ Conversational product discovery using a Single Agent, grounded in the DummyJSON
 
 ## Current implementation
 
-Tasks `BAZAK-AAC-001` through `BAZAK-AAC-003`, plus the hosted-model boundary from `BAZAK-AAC-006`: Next.js App Router foundation, TypeScript domain contracts, runtime product validation, a typed DummyJSON client, stable offline catalog fixtures, a process-local expiring snapshot cache, and schema-validated Vercel AI SDK catalog tools.
+The prototype includes the Next.js App Router foundation, TypeScript domain contracts, runtime product validation, a typed DummyJSON client, stable offline catalog fixtures, a process-local expiring snapshot cache, schema-validated Vercel AI SDK catalog tools, semantic ranking, multi-intent orchestration, adaptive clarification, product cards, scoped partial failures, and explicit per-intent retry.
 
-Semantic ranking, multi-intent orchestration, clarification, product cards, retries, and persistence are planned and not yet implemented. The hosted-model boundary is implemented, but the current UI does not invoke it and automated tests make no live model calls.
+The shopper UI supports two clearly separated modes. Deterministic demo mode uses local catalog fixtures for reproducible review. Live mode invokes the server-side GPT-5.4-mini boundary and DummyJSON catalog only when provider credentials are configured. Demo mode is never an automatic fallback for a failed live request. Server-side conversation persistence and reconnect recovery are not implemented.
 
 ## Local setup
 
@@ -14,21 +14,22 @@ Use Node.js 22.12 or newer and npm. Run `npm ci`, then `npm run dev`. Open http:
 
 The default `AI_PROVIDER=disabled` mode needs no credentials. To enable the hosted boundary, set `AI_PROVIDER=openai` and provide a nonempty server-side `OPENAI_API_KEY`. `OPENAI_MODEL` is intentionally pinned to `gpt-5.4-mini`; the application rejects silent substitution rather than falling back to a different model. Never put credentials in `NEXT_PUBLIC_*` variables or commit environment files.
 
-GPT-5.4-mini access is an environment assumption and has not been verified by the offline suite. `src/lib/agent/` configures three schema-validated, catalog-grounded tools (`searchCatalog`, `getProduct`, and `listCategories`) and stops an AI SDK tool loop after five completed steps. Catalog/provider failures are translated to typed errors; unknown product IDs are rejected before product data can be returned. A future orchestration task will connect this boundary to a server route and shopper UI.
+GPT-5.4-mini access is an environment assumption and has not been verified by the offline suite. `src/lib/agent/` configures three schema-validated, catalog-grounded tools (`searchCatalog`, `getProduct`, and `listCategories`) and stops an AI SDK tool loop after five completed steps. Catalog/provider failures are translated to typed errors; unknown product IDs are rejected before product data can be returned. The live route and shopper UI are connected, but the repository contains no credentials and automated tests make no live model calls.
 
 ## Verification
 
 - `npm run check`: lint, generated Next.js route types, TypeScript, and unit tests.
 - `npm run build`: production compilation.
+- `npm run test:e2e`: deterministic Chrome shopper journeys, including clarification, partial failure, retry, empty results, injection defense, and responsive layout.
 - `npm start`: run the production build.
 
-MSW is installed for later boundary simulations. Playwright, Ollama, and live OpenAI evaluation will be introduced by their respective tasks; they are not claimed as passing.
+Playwright runs against explicit demo mode and the disabled-provider boundary. A successful live OpenAI request is not claimed until a reviewer supplies an authorized local server credential and runs a separate provider check.
 
 ## Scope and delivery
 
 Canonical specification, plan, decisions, and test plan are in `outputs/`. Delivery target: November 1, 2026 at 23:59 Asia/Jerusalem.
 
-SQLite remains conditional scope. The current application stores no conversations. The planned persistence does not imply that execution survives server shutdown; deployment durability depends on storage.
+The current application stores no conversations. SQLite/reconnect scope is still awaiting an explicit requirement decision. If implemented, it would not imply that execution survives server shutdown; deployment durability would still depend on storage.
 
 Cart, checkout, authentication, deployment, and production job infrastructure are outside the current implementation scope.
 

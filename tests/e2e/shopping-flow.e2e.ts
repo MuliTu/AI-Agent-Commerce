@@ -70,6 +70,54 @@ test('partial failure keeps the successful sibling visible', async ({ page }) =>
   await expect(page.getByRole('heading', { name: 'Unavailable catalog search' })).toBeVisible();
   await expect(page.getByText('This intent failed safely')).toBeVisible();
   await expect(page.getByText('Partial result')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry this intent' })).toBeVisible();
+});
+
+test('retry keeps the successful sibling visible and recovers only the failed intent', async ({ page }) => {
+  await runExample(page, 'Partial failure');
+  const retry = page.getByRole('button', { name: 'Retry this intent' });
+  await retry.focus();
+  await expect(retry).toBeFocused();
+  await page.keyboard.press('Enter');
+  const retryStatus = page.getByRole('status').filter({ hasText: 'Retrying this intent' });
+  await expect(retryStatus).toBeVisible();
+  await expect(retryStatus).toHaveAttribute('aria-live', 'polite');
+  await expect(page.getByRole('heading', { name: 'Dell Latitude 5440' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Essence Mascara Lash Princess' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry this intent' })).toHaveCount(0);
+});
+
+test('a failed retry becomes a permanent scoped failure', async ({ page }) => {
+  await runExample(page, 'Permanent retry failure');
+  await expect(page.getByRole('heading', { name: 'Dell Latitude 5440' })).toBeVisible();
+  await page.getByRole('button', { name: 'Retry this intent' }).click();
+  await expect(page.getByText('Retrying this intent')).toBeVisible();
+  await expect(page.getByText('This catalog request cannot be retried safely.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry this intent' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Dell Latitude 5440' })).toBeVisible();
+});
+
+test('empty catalog results are announced and offer one focused next step', async ({ page }) => {
+  await runExample(page, 'Empty results');
+  const emptyStatus = page.getByRole('status').filter({ hasText: 'No catalog matches yet' });
+  await expect(emptyStatus).toBeVisible();
+  await expect(emptyStatus).toHaveAttribute('aria-live', 'polite');
+  await expect(page.getByText('The current request returned no trusted products.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'What kind of product should I focus on?' })).toHaveCount(1);
+});
+
+test('same-tick double activation sends only one shopping request', async ({ page }) => {
+  let requests = 0;
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().endsWith('/api/demo/orchestrate')) requests += 1;
+  });
+  const submit = page.getByRole('button', { name: 'Find products' });
+  await submit.evaluate((button) => {
+    (button as HTMLButtonElement).click();
+    (button as HTMLButtonElement).click();
+  });
+  await expect(page.getByRole('heading', { name: 'Find a work laptop' })).toBeVisible();
+  expect(requests).toBe(1);
 });
 
 test('prompt injection cannot create a product outside the trusted catalog', async ({ page }) => {

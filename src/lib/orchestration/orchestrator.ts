@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { AgentBoundaryError, createCatalogToolHandlers, type AgentCatalogClient } from '../agent';
 import type { Constraints, ShoppingIntent, TurnStatus } from '../domain/contracts';
 import { rankCatalogProducts } from '../ranking';
+import { executeWithRetry, type RetryOptions } from '../reliability';
 import {
   extractedTurnPlanSchema,
   type ExtractedIntent,
@@ -27,6 +28,7 @@ export type IntentOrchestratorOptions = {
   catalog: AgentCatalogClient;
   extractIntents: IntentExtractor;
   resultLimit?: number;
+  retryOptions?: RetryOptions;
 };
 
 export type OrchestrateTurnInput = {
@@ -34,6 +36,7 @@ export type OrchestrateTurnInput = {
   conversationId: string;
   prompt: string;
   previous?: OrchestrationResult;
+  retryIntentId?: string;
 };
 
 function mergeConstraints(previous: Constraints | undefined, update: Constraints): Constraints {
@@ -78,12 +81,12 @@ function resolveIntent(
   };
 }
 
-function scopedFailure(intent: ShoppingIntent, error: unknown): IntentOutcome {
+function scopedFailure(intent: ShoppingIntent, error: unknown, terminal = false): IntentOutcome {
   if (error instanceof AgentBoundaryError) {
     return {
       intent: { ...intent, status: 'failed' },
       products: [],
-      error: { code: error.code, message: error.message, retryable: error.retryable },
+      error: { code: error.code, message: error.message, retryable: terminal ? false : error.retryable },
     };
   }
   return {
@@ -124,36 +127,61 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
       const previousOutcomes = input.previous?.outcomes ?? [];
       const previous = new Map(previousOutcomes.map((outcome) => [outcome.intent.id, outcome]));
       let plan;
-      try {
-        const rawPlan = await options.extractIntents({
-          prompt: promptResult.data,
-          previousIntents: previousOutcomes.map(({ intent }) => ({ ...intent })),
+      if (input.retryIntentId) {
+        const retry = previous.get(input.retryIntentId);
+        if (!retry || retry.intent.status !== 'failed' || !retry.error?.retryable) {
+          throw new OrchestrationError('invalid_refinement', 'Only a retryable failed intent from the previous turn can be retried.');
+        }
+        plan = extractedTurnPlanSchema.parse({
+          response: `I retried ${retry.intent.goal} without changing the other shopping goals.`,
+          intents: [{ intentId: retry.intent.id, constraints: retry.intent.constraints }],
         });
-        plan = extractedTurnPlanSchema.parse(rawPlan);
-      } catch (error) {
-        if (error instanceof AgentBoundaryError) throw error;
-        if (error instanceof OrchestrationError) throw error;
-        throw new OrchestrationError('invalid_plan', 'The model returned an invalid intent plan.', error);
+      } else {
+        try {
+          const rawPlan = await options.extractIntents({
+            prompt: promptResult.data,
+            previousIntents: previousOutcomes.map(({ intent }) => ({ ...intent })),
+          });
+          plan = extractedTurnPlanSchema.parse(rawPlan);
+        } catch (error) {
+          if (error instanceof AgentBoundaryError) throw error;
+          if (error instanceof OrchestrationError) throw error;
+          throw new OrchestrationError('invalid_plan', 'The model returned an invalid intent plan.', error);
+        }
       }
 
       const used = new Set<string>();
       const planned = plan.intents.map((draft) => resolveIntent(draft, input.turnId, previous, used));
       const plannedIds = new Set(planned.map(({ id }) => id));
-      const preserved = previousOutcomes
+      const preserved = await Promise.all(previousOutcomes
         .filter(({ intent }) => !plannedIds.has(intent.id))
-        .map((outcome): IntentOutcome => {
+        .map(async (outcome): Promise<IntentOutcome> => {
+          for (const ranked of outcome.products) {
+            let trusted;
+            try {
+              trusted = await handlers.getProduct({ id: ranked.product.id });
+            } catch (error) {
+              throw new OrchestrationError('invalid_refinement', 'Previous catalog results could not be revalidated.', error);
+            }
+            if (JSON.stringify(trusted) !== JSON.stringify(ranked.product)) {
+              throw new OrchestrationError('invalid_refinement', 'Previous catalog results do not match the trusted catalog.');
+            }
+          }
           if (outcome.intent.status !== 'needs_clarification' || outcome.clarification) return outcome;
           return {
             ...outcome,
             clarification: evaluateClarification(outcome.intent, outcome.products),
           };
-        });
+        }));
       const settled = await Promise.all(planned.map(async (intent): Promise<IntentOutcome> => {
         if (intent.status === 'needs_clarification') {
           return { intent, products: [], clarification: evaluateClarification(intent, []) };
         }
         try {
-          const result = await handlers.searchCatalog({ query: intent.query, limit: 20 });
+          const search = () => handlers.searchCatalog({ query: intent.query, limit: 20 });
+          const result = input.retryIntentId === intent.id
+            ? await executeWithRetry(search, options.retryOptions)
+            : await search();
           const products = rankCatalogProducts(result.products, {
             query: intent.query,
             constraints: intent.constraints,
@@ -169,7 +197,7 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
           }
           return { intent: { ...intent, status: 'completed' }, products };
         } catch (error) {
-          return scopedFailure(intent, error);
+          return scopedFailure(intent, error, input.retryIntentId === intent.id);
         }
       }));
       const outcomes = selectTurnClarification([...preserved, ...settled]);
