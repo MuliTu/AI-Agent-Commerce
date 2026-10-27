@@ -1,0 +1,239 @@
+openapi: 3.0.0
+info:
+  title: DummyJSON Products API
+  version: 1.0.0
+description: |
+  A simplified OpenAPI specification for the DummyJSON Products API. It lists the primary
+  endpoints for fetching product data. Not every endpoint or field may be used in the
+  assignment; you can choose the ones relevant to your solution.  This document is
+  provided for reference so you can explore available filters and query parameters.
+servers:
+  - url: https://dummyjson.com
+paths:
+  /products:
+    get:
+      summary: Get a list of products
+      description: Retrieve multiple products with optional pagination, field selection and sorting.
+      parameters:
+        - name: limit
+          in: query
+          description: Number of products to return (defaults to 30). Use 0 to retrieve all.
+          schema:
+            type: integer
+        - name: skip
+          in: query
+          description: Number of products to skip for pagination.
+          schema:
+            type: integer
+        - name: select
+          in: query
+          description: Comma‑separated list of product fields to include in the response (e.g., `title,price`).
+          schema:
+            type: string
+        - name: sortBy
+          in: query
+          description: Field name to sort by (e.g., `title`, `price`).
+          schema:
+            type: string
+        - name: order
+          in: query
+          description: Sorting order (`asc` or `desc`).
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A list of products with pagination info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  products:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Product'
+                  total:
+                    type: integer
+                  skip:
+                    type: integer
+                  limit:
+                    type: integer
+  /products/{id}:
+    get:
+      summary: Get a single product
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The ID of the product to retrieve.
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: A single product
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+  /products/search:
+    get:
+      summary: Search products
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Search query string.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Number of products to return.
+          schema:
+            type: integer
+        - name: skip
+          in: query
+          description: Number of products to skip.
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Products matching the search term with pagination info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  products:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Product'
+                  total:
+                    type: integer
+                  skip:
+                    type: integer
+                  limit:
+                    type: integer
+  /products/categories:
+    get:
+      summary: Get product categories
+      description: Retrieve the list of categories with slugs and names.
+      responses:
+        '200':
+          description: A list of category objects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    slug:
+                      type: string
+                    name:
+                      type: string
+                    url:
+                      type: string
+  /products/category-list:
+    get:
+      summary: Get product category slugs
+      description: Retrieve a simple array of category slugs.
+      responses:
+        '200':
+          description: A list of category slug strings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+  /products/category/{slug}:
+    get:
+      summary: Get products by category
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Category slug (e.g., `smartphones`, `beauty`).
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Number of products to return.
+          schema:
+            type: integer
+        - name: skip
+          in: query
+          description: Number of products to skip.
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Products within the specified category with pagination info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  products:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Product'
+                  total:
+                    type: integer
+                  skip:
+                    type: integer
+                  limit:
+                    type: integer
+components:
+  schemas:
+    Product:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+        price:
+          type: number
+          format: float
+        discountPercentage:
+          type: number
+        rating:
+          type: number
+        stock:
+          type: integer
+        tags:
+          type: array
+          items:
+            type: string
+        brand:
+          type: string
+        sku:
+          type: string
+        weight:
+          type: number
+        dimensions:
+          type: object
+          properties:
+            width:
+              type: number
+            height:
+              type: number
+            depth:
+              type: number
+        warrantyInformation:
+          type: string
+        shippingInformation:
+          type: string
+        availabilityStatus:
+          type: string
+        images:
+          type: array
+          items:
+            type: string
+        thumbnail:
+          type: string
