@@ -191,7 +191,110 @@ describe('single-agent multi-intent orchestration', () => {
     ]);
     expect(result.outcomes[0].products[0].product.id).toBe(1);
     expect(result.outcomes[1].products).toEqual([]);
+    expect(result.outcomes[1].clarification).toMatchObject({
+      field: 'category',
+      reason: 'requested',
+    });
     expect(search).toHaveBeenCalledOnce();
+  });
+
+  it('adapts after catalog search while unaffected intents still complete', async () => {
+    const search = vi.fn(async ({ query }: { query: string }) =>
+      page(query.includes('phone') ? [phone] : []));
+    const orchestrator = createIntentOrchestrator({
+      catalog: catalog(search),
+      extractIntents: async () => ({
+        intents: [
+          { goal: 'Photography phone', query: 'phone camera', constraints: {} },
+          { goal: 'Open-ended gift', query: 'gift', constraints: {} },
+        ],
+        response: 'I handled each goal independently.',
+      }),
+    });
+
+    const result = await orchestrator.run({
+      turnId: 'turn-adaptive', conversationId: 'conversation-1', prompt: 'Phone and a gift.',
+    });
+
+    expect(result.status).toBe('partial');
+    expect(result.outcomes[0]).toMatchObject({ intent: { status: 'completed' } });
+    expect(result.outcomes[1]).toMatchObject({
+      intent: { status: 'needs_clarification' },
+      products: [],
+      clarification: { field: 'category', reason: 'empty' },
+    });
+    expect(search).toHaveBeenCalledTimes(2);
+  });
+
+  it('asks exactly one deterministic question when two intents are ambiguous', async () => {
+    const search = vi.fn(async () => page([]));
+    const orchestrator = createIntentOrchestrator({
+      catalog: catalog(search),
+      extractIntents: async () => ({
+        intents: [
+          { goal: 'Gift', query: 'gift', constraints: {} },
+          { goal: 'Surprise item', query: 'surprise', constraints: {} },
+        ],
+        response: 'I will clarify one goal at a time.',
+      }),
+    });
+
+    const result = await orchestrator.run({
+      turnId: 'turn-two-ambiguous', conversationId: 'conversation-1', prompt: 'Two vague items.',
+    });
+
+    expect(result.outcomes.map(({ intent }) => intent.status)).toEqual([
+      'needs_clarification', 'needs_clarification',
+    ]);
+    expect(result.outcomes.filter(({ clarification }) => clarification)).toHaveLength(1);
+    expect(result.outcomes[0].clarification).toMatchObject({ field: 'category', reason: 'empty' });
+    expect(result.outcomes[1].clarification).toBeUndefined();
+  });
+
+  it('promotes the queued ambiguity after the active intent is resolved', async () => {
+    let step = 0;
+    const search = vi.fn(async () => page([phone]));
+    const orchestrator = createIntentOrchestrator({
+      catalog: catalog(search),
+      extractIntents: async () => {
+        step += 1;
+        return step === 1 ? {
+          intents: [
+            { goal: 'Phone', query: 'phone', constraints: {}, status: 'needs_clarification' as const },
+            { goal: 'Gift', query: 'gift', constraints: {}, status: 'needs_clarification' as const },
+          ],
+          response: 'I will clarify one goal at a time.',
+        } : {
+          intents: [{
+            intentId: 'turn-sequence-1:intent:1',
+            query: 'phone camera',
+            constraints: { category: 'smartphones' },
+          }],
+          response: 'The phone goal is resolved; next I need one gift detail.',
+        };
+      },
+    });
+
+    const first = await orchestrator.run({
+      turnId: 'turn-sequence-1', conversationId: 'conversation-1', prompt: 'Phone and gift.',
+    });
+    expect(first.outcomes.filter(({ clarification }) => clarification)).toHaveLength(1);
+
+    const second = await orchestrator.run({
+      turnId: 'turn-sequence-2',
+      conversationId: 'conversation-1',
+      prompt: 'Make the phone a smartphone.',
+      previous: first,
+    });
+
+    expect(second.outcomes.find(({ intent }) => intent.id === 'turn-sequence-1:intent:1'))
+      .toMatchObject({ intent: { status: 'completed' } });
+    expect(second.outcomes.find(({ intent }) => intent.id === 'turn-sequence-1:intent:2'))
+      .toMatchObject({
+        intent: { status: 'needs_clarification' },
+        clarification: { field: 'category', reason: 'requested' },
+      });
+    expect(second.outcomes.filter(({ clarification }) => clarification)).toHaveLength(1);
   });
 
   it('rejects model-invented product payloads instead of exposing them as results', async () => {

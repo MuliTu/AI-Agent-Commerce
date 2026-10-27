@@ -25,12 +25,30 @@ function plan(context: IntentExtractionContext) {
       intents: [{ intentId: prior.id, constraints: { maxPrice: amount } }],
     });
   }
+  if (prior) {
+    const category = ['laptops', 'shoes', 'beauty'].find((value) => prompt.includes(value));
+    if (category) {
+      return extractedTurnPlanSchema.parse({
+        response: `I kept your earlier requirements and focused the search on ${category}.`,
+        intents: [{ intentId: prior.id, query: category, constraints: { category } }],
+      });
+    }
+  }
   if (prompt.includes('partial failure')) {
     return extractedTurnPlanSchema.parse({
       response: 'I kept the successful catalog result visible and isolated the failed search.',
       intents: [
         { goal: 'Find a work laptop', query: 'laptop', constraints: {}, status: 'ready' },
         { goal: 'Unavailable catalog search', query: 'unavailable-demo', constraints: {}, status: 'ready' },
+      ],
+    });
+  }
+  if (prompt.includes('two ambiguous')) {
+    return extractedTurnPlanSchema.parse({
+      response: 'I will clarify one shopping goal at a time.',
+      intents: [
+        { goal: 'Find a gift', query: 'gift', constraints: {}, status: 'needs_clarification' },
+        { goal: 'Find a surprise item', query: 'surprise', constraints: {}, status: 'needs_clarification' },
       ],
     });
   }
