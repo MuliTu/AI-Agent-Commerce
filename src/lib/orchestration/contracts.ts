@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { Constraints, ShoppingIntent, TurnStatus } from '../domain/contracts';
+import { productSchema, type Constraints, type ShoppingIntent, type TurnStatus } from '../domain/contracts';
 import type { RankedProduct } from '../ranking';
 
 export const intentConstraintsSchema = z.object({
@@ -22,6 +22,38 @@ export const extractedIntentSchema = z.object({
 export const extractedTurnPlanSchema = z.object({
   intents: z.array(extractedIntentSchema).min(1).max(8),
   response: z.string().trim().min(1),
+}).strict();
+
+const shoppingIntentSchema = z.object({
+  id: z.string().trim().min(1),
+  goal: z.string().trim().min(1),
+  query: z.string().trim().min(1),
+  constraints: intentConstraintsSchema,
+  status: z.enum(['ready', 'needs_clarification', 'completed', 'failed']),
+}).strict();
+
+const matchReasonSchema = z.object({
+  field: z.enum(['title', 'category', 'brand', 'tags', 'rating', 'price', 'availability']),
+  value: z.string(),
+}).strict();
+
+export const orchestrationResultSchema = z.object({
+  turnId: z.string().trim().min(1),
+  status: z.enum(['queued', 'running', 'completed', 'partial', 'failed']),
+  response: z.string().trim().min(1),
+  outcomes: z.array(z.object({
+    intent: shoppingIntentSchema,
+    products: z.array(z.object({
+      product: productSchema,
+      score: z.number(),
+      matchReasons: z.array(matchReasonSchema),
+    }).strict()),
+    error: z.object({
+      code: z.string().trim().min(1),
+      message: z.string().trim().min(1),
+      retryable: z.boolean(),
+    }).strict().optional(),
+  }).strict()),
 }).strict();
 
 export type ExtractedTurnPlan = z.infer<typeof extractedTurnPlanSchema>;
