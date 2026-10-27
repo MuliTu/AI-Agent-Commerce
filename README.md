@@ -4,9 +4,9 @@ Conversational product discovery using a Single Agent, grounded in the DummyJSON
 
 ## Current implementation
 
-Task `BAZAK-AAC-001`: Next.js App Router foundation, TypeScript domain contracts, runtime product validation, server configuration validation, an honest development landing page, ESLint, and Vitest.
+Tasks `BAZAK-AAC-001` through `BAZAK-AAC-003`: Next.js App Router foundation, TypeScript domain contracts, runtime product validation, a typed DummyJSON client, stable offline catalog fixtures, and a process-local expiring snapshot cache.
 
-Catalog retrieval, semantic ranking, Vercel AI SDK integration, multi-intent orchestration, clarification, product cards, retries, and persistence are planned and not yet implemented. No live model calls are made.
+Semantic ranking, Vercel AI SDK integration, multi-intent orchestration, clarification, product cards, retries, and persistence are planned and not yet implemented. No live model calls are made.
 
 ## Local setup
 
@@ -33,6 +33,20 @@ Cart, checkout, authentication, deployment, and production job infrastructure ar
 ## Source materials
 
 `docs/dummyjson_products_openapi.yaml` is the supplied assignment reference, preserved unchanged. Product validation tolerates omitted optional metadata while requiring identity, title, category, and price for usable catalog results.
+
+## Catalog fixtures and snapshot policy
+
+Offline catalog tests use the versioned files in `tests/fixtures/catalog/`.
+Their provenance and manual refresh procedure are recorded alongside the data;
+tests parse them with the same `catalogPageSchema` and `productSchema` used by
+the live client. Unit tests never depend on network access or live API ordering.
+
+`ExpiringSnapshotCache` is a process-local helper with an explicit caller-set
+TTL. A miss or expired value invokes the supplied loader; concurrent misses are
+coalesced; `refresh` replaces a snapshot only after a successful load. Values
+are lost on restart and are not shared between application instances. This is
+appropriate for demonstration catalog snapshots only: it does not guarantee
+current price, stock or transactional inventory and is not a distributed cache.
 
 ## What I would change with another week
 
