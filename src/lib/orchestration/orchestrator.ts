@@ -1,0 +1,165 @@
+import { z } from 'zod';
+import { AgentBoundaryError, createCatalogToolHandlers, type AgentCatalogClient } from '../agent';
+import type { Constraints, ShoppingIntent, TurnStatus } from '../domain/contracts';
+import { rankCatalogProducts } from '../ranking';
+import {
+  extractedTurnPlanSchema,
+  type ExtractedIntent,
+  type IntentExtractor,
+  type IntentOutcome,
+  type OrchestrationResult,
+} from './contracts';
+
+const shopperPromptSchema = z.string().trim().min(1);
+
+export class OrchestrationError extends Error {
+  readonly code: 'invalid_prompt' | 'invalid_plan' | 'invalid_refinement';
+
+  constructor(code: OrchestrationError['code'], message: string, cause?: unknown) {
+    super(message, { cause });
+    this.name = 'OrchestrationError';
+    this.code = code;
+  }
+}
+
+export type IntentOrchestratorOptions = {
+  catalog: AgentCatalogClient;
+  extractIntents: IntentExtractor;
+  resultLimit?: number;
+};
+
+export type OrchestrateTurnInput = {
+  turnId: string;
+  conversationId: string;
+  prompt: string;
+  previous?: OrchestrationResult;
+};
+
+function mergeConstraints(previous: Constraints | undefined, update: Constraints): Constraints {
+  return { ...previous, ...update };
+}
+
+function nextIntentId(turnId: string, used: Set<string>): string {
+  let sequence = 1;
+  while (used.has(`${turnId}:intent:${sequence}`)) sequence += 1;
+  return `${turnId}:intent:${sequence}`;
+}
+
+function resolveIntent(
+  draft: ExtractedIntent,
+  turnId: string,
+  previous: Map<string, IntentOutcome>,
+  used: Set<string>,
+): ShoppingIntent {
+  const prior = draft.intentId ? previous.get(draft.intentId) : undefined;
+  if (draft.intentId && !prior) {
+    throw new OrchestrationError(
+      'invalid_refinement',
+      `Intent ${draft.intentId} is not part of the previous conversation state.`,
+    );
+  }
+  const id = prior?.intent.id ?? nextIntentId(turnId, used);
+  if (used.has(id)) {
+    throw new OrchestrationError('invalid_plan', `Intent ${id} appears more than once in the turn plan.`);
+  }
+  const goal = draft.goal ?? prior?.intent.goal;
+  const query = draft.query ?? prior?.intent.query;
+  if (!goal || !query) {
+    throw new OrchestrationError('invalid_plan', 'New intents require both a goal and a catalog query.');
+  }
+  used.add(id);
+  return {
+    id,
+    goal,
+    query,
+    constraints: mergeConstraints(prior?.intent.constraints, draft.constraints),
+    status: draft.status,
+  };
+}
+
+function scopedFailure(intent: ShoppingIntent, error: unknown): IntentOutcome {
+  if (error instanceof AgentBoundaryError) {
+    return {
+      intent: { ...intent, status: 'failed' },
+      products: [],
+      error: { code: error.code, message: error.message, retryable: error.retryable },
+    };
+  }
+  return {
+    intent: { ...intent, status: 'failed' },
+    products: [],
+    error: {
+      code: 'catalog_unavailable',
+      message: 'The catalog request could not be completed.',
+      retryable: false,
+    },
+  };
+}
+
+function turnStatus(outcomes: IntentOutcome[]): TurnStatus {
+  const completed = outcomes.filter(({ intent }) => intent.status === 'completed').length;
+  const failed = outcomes.filter(({ intent }) => intent.status === 'failed').length;
+  const waiting = outcomes.filter(({ intent }) => intent.status === 'needs_clarification').length;
+  if (completed === outcomes.length) return 'completed';
+  if (failed === outcomes.length) return 'failed';
+  if (completed > 0 && (failed > 0 || waiting > 0)) return 'partial';
+  return 'running';
+}
+
+export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
+  const handlers = createCatalogToolHandlers(options.catalog);
+  const limit = z.number().int().min(1).max(20).parse(options.resultLimit ?? 5);
+
+  return {
+    async run(input: OrchestrateTurnInput): Promise<OrchestrationResult> {
+      const promptResult = shopperPromptSchema.safeParse(input.prompt);
+      if (!promptResult.success) {
+        throw new OrchestrationError('invalid_prompt', 'A nonempty shopper prompt is required.');
+      }
+      if (!input.turnId.trim() || !input.conversationId.trim()) {
+        throw new OrchestrationError('invalid_prompt', 'Turn and conversation identities are required.');
+      }
+
+      const previousOutcomes = input.previous?.outcomes ?? [];
+      const previous = new Map(previousOutcomes.map((outcome) => [outcome.intent.id, outcome]));
+      let plan;
+      try {
+        const rawPlan = await options.extractIntents({
+          prompt: promptResult.data,
+          previousIntents: previousOutcomes.map(({ intent }) => ({ ...intent })),
+        });
+        plan = extractedTurnPlanSchema.parse(rawPlan);
+      } catch (error) {
+        if (error instanceof AgentBoundaryError) throw error;
+        if (error instanceof OrchestrationError) throw error;
+        throw new OrchestrationError('invalid_plan', 'The model returned an invalid intent plan.', error);
+      }
+
+      const used = new Set<string>();
+      const planned = plan.intents.map((draft) => resolveIntent(draft, input.turnId, previous, used));
+      const plannedIds = new Set(planned.map(({ id }) => id));
+      const preserved = previousOutcomes.filter(({ intent }) => !plannedIds.has(intent.id));
+      const settled = await Promise.all(planned.map(async (intent): Promise<IntentOutcome> => {
+        if (intent.status === 'needs_clarification') return { intent, products: [] };
+        try {
+          const result = await handlers.searchCatalog({ query: intent.query, limit: 20 });
+          const products = rankCatalogProducts(result.products, {
+            query: intent.query,
+            constraints: intent.constraints,
+            limit,
+          });
+          return { intent: { ...intent, status: 'completed' }, products };
+        } catch (error) {
+          return scopedFailure(intent, error);
+        }
+      }));
+      const outcomes = [...preserved, ...settled];
+      return {
+        turnId: input.turnId,
+        status: turnStatus(outcomes),
+        response: plan.response,
+        outcomes,
+      };
+    },
+  };
+}
