@@ -2,6 +2,7 @@ export {
   extractedIntentSchema,
   extractedTurnPlanSchema,
   intentConstraintsSchema,
+  orchestrationResultSchema,
   type ExtractedIntent,
   type ExtractedTurnPlan,
   type IntentExtractionContext,
