@@ -43,6 +43,21 @@ function plan(context: IntentExtractionContext) {
       ],
     });
   }
+  if (prompt.includes('permanent retry failure')) {
+    return extractedTurnPlanSchema.parse({
+      response: 'I kept the successful result visible while isolating a retryable catalog failure.',
+      intents: [
+        { goal: 'Find a work laptop', query: 'laptop', constraints: {}, status: 'ready' },
+        { goal: 'Retry a limited catalog', query: 'retry-permanent-demo', constraints: {}, status: 'ready' },
+      ],
+    });
+  }
+  if (prompt.includes('empty results')) {
+    return extractedTurnPlanSchema.parse({
+      response: 'The trusted catalog has no matching products, so I left the result empty.',
+      intents: [{ goal: 'Find a nonexistent catalog item', query: 'no-such-catalog-item', constraints: {}, status: 'ready' }],
+    });
+  }
   if (prompt.includes('two ambiguous')) {
     return extractedTurnPlanSchema.parse({
       response: 'I will clarify one shopping goal at a time.',
@@ -90,7 +105,7 @@ function matchingProducts(query: string): Product[] {
 
 const catalog: AgentCatalogClient = {
   async searchProducts({ query, limit = 20 }) {
-    if (query === 'unavailable-demo') {
+    if (query === 'unavailable-demo' || query === 'retry-permanent-demo') {
       throw new AgentBoundaryError('catalog_unavailable', 'This catalog search is temporarily unavailable.', true);
     }
     const matches = matchingProducts(query).slice(0, limit);
@@ -111,6 +126,24 @@ export async function runDemoOrchestration(input: {
   conversationId: string;
   prompt: string;
   previous?: OrchestrationResult;
+  retryIntentId?: string;
 }): Promise<OrchestrationResult> {
-  return createIntentOrchestrator({ catalog, extractIntents: async (context) => plan(context) }).run(input);
+  if (input.retryIntentId) await new Promise((resolve) => setTimeout(resolve, 150));
+  const retryCatalog: AgentCatalogClient = input.retryIntentId ? {
+    ...catalog,
+    async searchProducts(request) {
+      if (request.query === 'unavailable-demo') {
+        return { products: products.filter((product) => product.category === 'beauty'), total: 1, skip: 0, limit: request.limit ?? 20 };
+      }
+      if (request.query === 'retry-permanent-demo') {
+        throw new AgentBoundaryError('unknown_product', 'This catalog request cannot be retried safely.', false);
+      }
+      return catalog.searchProducts(request);
+    },
+  } : catalog;
+  return createIntentOrchestrator({
+    catalog: retryCatalog,
+    extractIntents: async (context) => plan(context),
+    retryOptions: { sleep: async () => undefined, random: () => 0 },
+  }).run(input);
 }

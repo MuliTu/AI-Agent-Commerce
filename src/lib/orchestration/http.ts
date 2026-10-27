@@ -6,6 +6,7 @@ export const orchestrationRequestSchema = z.object({
   conversationId: z.string().trim().min(1).default('local-demo'),
   turnId: z.string().trim().min(1),
   previous: orchestrationResultSchema.optional(),
+  retryIntentId: z.string().trim().min(1).optional(),
 }).strict();
 
 export const orchestrationResponseSchema = z.object({

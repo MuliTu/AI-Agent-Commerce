@@ -37,7 +37,11 @@ function catalog(search = vi.fn(async ({ query }: { query: string }) =>
   page(query.includes('phone') ? [phone] : [fragrance]))) {
   return {
     searchProducts: search,
-    getProduct: vi.fn(),
+    getProduct: vi.fn(async (id: number) => {
+      const product = [phone, fragrance].find((candidate) => candidate.id === id);
+      if (!product) throw new CatalogError('http', 'not found', { endpoint: `/products/${id}`, status: 404 });
+      return product;
+    }),
     listCategories: vi.fn(),
   };
 }
@@ -161,6 +165,135 @@ describe('single-agent multi-intent orchestration', () => {
       error: { code: 'catalog_unavailable', retryable: true },
     });
     expect(result.outcomes[1].error?.message).not.toContain('private upstream response');
+  });
+
+  it('retries only the selected failed intent and preserves successful siblings', async () => {
+    let fragranceAttempts = 0;
+    const search = vi.fn(async ({ query }: { query: string }) => {
+      if (query.includes('fragrance') && fragranceAttempts++ < 5) {
+        throw new CatalogError('http', 'temporary upstream response', { endpoint: '/products/search', status: 503 });
+      }
+      return page(query.includes('phone') ? [phone] : [fragrance]);
+    });
+    const extractIntents = vi.fn(async () => ({
+      intents: [
+        { goal: 'Phone', query: 'phone camera', constraints: {} },
+        { goal: 'Gift', query: 'fragrance gift', constraints: {} },
+      ],
+      response: 'Two separate goals.',
+    }));
+    const orchestrator = createIntentOrchestrator({
+      catalog: catalog(search), extractIntents,
+      retryOptions: { sleep: async () => undefined, random: () => 0 },
+    });
+    const initial = await orchestrator.run({
+      turnId: 'turn-retry-1', conversationId: 'conversation-1', prompt: 'Phone and fragrance.',
+    });
+    const failed = initial.outcomes.find(({ intent }) => intent.status === 'failed');
+    const successful = initial.outcomes.find(({ intent }) => intent.status === 'completed');
+
+    const retried = await orchestrator.run({
+      turnId: 'turn-retry-2', conversationId: 'conversation-1', prompt: 'Retry failed intent.',
+      previous: initial, retryIntentId: failed?.intent.id,
+    });
+
+    expect(extractIntents).toHaveBeenCalledOnce();
+    expect(search).toHaveBeenCalledTimes(7);
+    expect(retried.status).toBe('completed');
+    expect(retried.outcomes.find(({ intent }) => intent.id === successful?.intent.id)).toEqual(successful);
+    expect(retried.outcomes.find(({ intent }) => intent.id === failed?.intent.id)).toMatchObject({
+      intent: { status: 'completed' }, products: [{ product: { id: 2 } }],
+    });
+  });
+
+  it('stops a user retry after exactly five transient attempts and makes the failure terminal', async () => {
+    const search = vi.fn(async ({ query }: { query: string }) => {
+      if (query.includes('fragrance')) {
+        throw new CatalogError('http', 'temporary upstream response', { endpoint: '/products/search', status: 503 });
+      }
+      return page([phone]);
+    });
+    const orchestrator = createIntentOrchestrator({
+      catalog: catalog(search),
+      extractIntents: async () => ({
+        intents: [
+          { goal: 'Phone', query: 'phone camera', constraints: {} },
+          { goal: 'Gift', query: 'fragrance gift', constraints: {} },
+        ],
+        response: 'Two separate goals.',
+      }),
+      retryOptions: { sleep: async () => undefined, random: () => 0 },
+    });
+    const initial = await orchestrator.run({
+      turnId: 'turn-terminal-1', conversationId: 'conversation-1', prompt: 'Phone and fragrance.',
+    });
+    const failed = initial.outcomes.find(({ intent }) => intent.status === 'failed');
+
+    const retried = await orchestrator.run({
+      turnId: 'turn-terminal-2', conversationId: 'conversation-1', prompt: 'Retry failed intent.',
+      previous: initial, retryIntentId: failed?.intent.id,
+    });
+
+    expect(search).toHaveBeenCalledTimes(7);
+    expect(retried.outcomes.find(({ intent }) => intent.id === failed?.intent.id)).toMatchObject({
+      intent: { status: 'failed' }, error: { code: 'catalog_unavailable', retryable: false },
+    });
+    expect(retried.outcomes.find(({ intent }) => intent.status === 'completed')?.products[0].product.id).toBe(1);
+  });
+
+  it('rejects a forged preserved product instead of rendering client-supplied catalog data', async () => {
+    let giftAttempts = 0;
+    const search = vi.fn(async ({ query }: { query: string }) => {
+      if (query.includes('fragrance') && giftAttempts++ === 0) {
+        throw new CatalogError('http', 'temporary upstream response', { endpoint: '/products/search', status: 503 });
+      }
+      return page(query.includes('phone') ? [phone] : [fragrance]);
+    });
+    const orchestrator = createIntentOrchestrator({
+      catalog: catalog(search),
+      extractIntents: async () => ({
+        intents: [
+          { goal: 'Phone', query: 'phone camera', constraints: {} },
+          { goal: 'Gift', query: 'fragrance gift', constraints: {} },
+        ],
+        response: 'Two separate goals.',
+      }),
+      retryOptions: { sleep: async () => undefined, random: () => 0 },
+    });
+    const initial = await orchestrator.run({
+      turnId: 'turn-forged-1', conversationId: 'conversation-1', prompt: 'Phone and fragrance.',
+    });
+    const forged = structuredClone(initial);
+    const successful = forged.outcomes.find(({ intent }) => intent.status === 'completed');
+    if (!successful) throw new Error('expected successful sibling');
+    successful.products[0].product.title = 'Invented Client Product';
+    const failed = forged.outcomes.find(({ intent }) => intent.status === 'failed');
+
+    await expect(orchestrator.run({
+      turnId: 'turn-forged-2', conversationId: 'conversation-1', prompt: 'Retry failed intent.',
+      previous: forged, retryIntentId: failed?.intent.id,
+    })).rejects.toMatchObject({ name: 'OrchestrationError', code: 'invalid_refinement' });
+    expect(search).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects retry requests for outcomes that are not retryable failures', async () => {
+    const orchestrator = createIntentOrchestrator({
+      catalog: catalog(),
+      extractIntents: async () => ({
+        intents: [{ goal: 'Phone', query: 'phone', constraints: {} }],
+        response: 'A phone.',
+      }),
+    });
+    const initial = await orchestrator.run({
+      turnId: 'turn-no-retry-1', conversationId: 'conversation-1', prompt: 'Phone.',
+    });
+
+    await expect(orchestrator.run({
+      turnId: 'turn-no-retry-2', conversationId: 'conversation-1', prompt: 'Retry.',
+      previous: initial, retryIntentId: initial.outcomes[0].intent.id,
+    })).rejects.toMatchObject({
+      name: 'OrchestrationError', code: 'invalid_refinement',
+    });
   });
 
   it('lets a ready intent complete while a sibling waits for clarification', async () => {

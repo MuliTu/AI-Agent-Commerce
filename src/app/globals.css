@@ -27,6 +27,7 @@ h2,h3,p { overflow-wrap:anywhere; }
 .shopper-form textarea { width:100%; resize:vertical; padding:14px; color:var(--ink); font:inherit; line-height:1.5; border:1px solid #8da096; border-radius:12px; background:#fff; }
 .shopper-form textarea:focus-visible { outline:3px solid #235f4d; outline-offset:3px; }
 .primary-action { justify-self:start; min-height:46px; padding:11px 18px; color:#fff; font-weight:700; border:1px solid var(--ink); border-radius:999px; background:var(--ink); }
+.secondary-action { min-height:44px; margin-top:14px; padding:10px 16px; color:var(--ink); font-weight:700; border:1px solid #4c7054; border-radius:999px; background:var(--accent); }
 .conversation>h2,.activity>h2 { font-size:16px; margin:0 0 18px; }
 .message { display:grid; grid-template-columns:82px minmax(0,1fr); gap:18px; max-width:760px; padding:18px 0; border-top:1px solid var(--line); }
 .message__speaker { margin:2px 0; font-size:13px; font-weight:700; }
