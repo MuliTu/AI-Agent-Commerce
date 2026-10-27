@@ -48,6 +48,12 @@ export const orchestrationResultSchema = z.object({
       score: z.number(),
       matchReasons: z.array(matchReasonSchema),
     }).strict()),
+    clarification: z.object({
+      field: z.enum(['maxPrice', 'minRating', 'category', 'inStock', 'brands', 'requiredTags', 'query']),
+      question: z.string().trim().min(1),
+      options: z.array(z.string().trim().min(1)).min(2),
+      reason: z.enum(['requested', 'empty', 'broad', 'split']),
+    }).strict().optional(),
     error: z.object({
       code: z.string().trim().min(1),
       message: z.string().trim().min(1),
@@ -62,6 +68,7 @@ export type ExtractedIntent = z.infer<typeof extractedIntentSchema>;
 export type IntentOutcome = {
   intent: ShoppingIntent;
   products: RankedProduct[];
+  clarification?: import('./clarification').Clarification;
   error?: {
     code: string;
     message: string;

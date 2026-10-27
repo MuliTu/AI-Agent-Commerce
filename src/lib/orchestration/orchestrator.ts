@@ -9,6 +9,7 @@ import {
   type IntentOutcome,
   type OrchestrationResult,
 } from './contracts';
+import { evaluateClarification, selectTurnClarification } from './clarification';
 
 const shopperPromptSchema = z.string().trim().min(1);
 
@@ -138,9 +139,19 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
       const used = new Set<string>();
       const planned = plan.intents.map((draft) => resolveIntent(draft, input.turnId, previous, used));
       const plannedIds = new Set(planned.map(({ id }) => id));
-      const preserved = previousOutcomes.filter(({ intent }) => !plannedIds.has(intent.id));
+      const preserved = previousOutcomes
+        .filter(({ intent }) => !plannedIds.has(intent.id))
+        .map((outcome): IntentOutcome => {
+          if (outcome.intent.status !== 'needs_clarification' || outcome.clarification) return outcome;
+          return {
+            ...outcome,
+            clarification: evaluateClarification(outcome.intent, outcome.products),
+          };
+        });
       const settled = await Promise.all(planned.map(async (intent): Promise<IntentOutcome> => {
-        if (intent.status === 'needs_clarification') return { intent, products: [] };
+        if (intent.status === 'needs_clarification') {
+          return { intent, products: [], clarification: evaluateClarification(intent, []) };
+        }
         try {
           const result = await handlers.searchCatalog({ query: intent.query, limit: 20 });
           const products = rankCatalogProducts(result.products, {
@@ -148,12 +159,20 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
             constraints: intent.constraints,
             limit,
           });
+          const clarification = evaluateClarification(intent, products);
+          if (clarification) {
+            return {
+              intent: { ...intent, status: 'needs_clarification' },
+              products: [],
+              clarification,
+            };
+          }
           return { intent: { ...intent, status: 'completed' }, products };
         } catch (error) {
           return scopedFailure(intent, error);
         }
       }));
-      const outcomes = [...preserved, ...settled];
+      const outcomes = selectTurnClarification([...preserved, ...settled]);
       return {
         turnId: input.turnId,
         status: turnStatus(outcomes),

@@ -106,7 +106,11 @@ export function CommerceExperience({ providerEnabled }: Props) {
           {!result && !pending && <RecommendationState state="empty" title="Ready when you are" description="Choose an example or enter your own shopping request." />}
           {result?.outcomes.map((outcome) => {
             if (outcome.intent.status === 'needs_clarification') {
-              return <ClarificationPrompt key={outcome.intent.id} name={outcome.intent.id} question={`What matters most for “${outcome.intent.goal}”?`} options={['Lower price', 'Higher rating', 'In stock now']} onSelect={(option) => setPrompt(`${option} under $1500`)} />;
+              const clarification = outcome.clarification;
+              if (!clarification) {
+                return <IntentSection key={outcome.intent.id} title={outcome.intent.goal} summary="Waiting for the current clarification" status="empty"><RecommendationState state="empty" title="Clarification queued" description="I will ask about this goal after the current question is resolved." /></IntentSection>;
+              }
+              return <ClarificationPrompt key={outcome.intent.id} name={outcome.intent.id} question={clarification.question} options={clarification.options} onSelect={(option) => setPrompt(option)} />;
             }
             if (outcome.intent.status === 'failed') {
               return <IntentSection key={outcome.intent.id} title={outcome.intent.goal} summary="The other shopping goals remain available" status="failed"><RecommendationState state="failure" title="This intent failed safely" description={outcome.error?.message ?? 'The catalog search failed.'} /></IntentSection>;

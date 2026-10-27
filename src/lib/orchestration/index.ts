@@ -21,3 +21,4 @@ export {
   type IntentPlanGenerator,
   type ProviderIntentExtractorOptions,
 } from './provider';
+export { evaluateClarification, selectTurnClarification, type Clarification } from './clarification';

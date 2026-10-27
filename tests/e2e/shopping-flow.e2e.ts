@@ -40,12 +40,28 @@ test('multi-intent request keeps each goal separate', async ({ page }) => {
 
 test('clarification can refine the same intent without inventing products', async ({ page }) => {
   await runExample(page, 'Clarification');
-  await expect(page.getByRole('heading', { name: /What matters most/ })).toBeVisible();
-  await page.getByLabel('Lower price').check();
-  await expect(page.getByLabel('What are you shopping for?')).toHaveValue('Lower price under $1500');
+  await expect(page.getByRole('heading', { name: 'Which product category should I focus on?' })).toBeVisible();
+  await page.getByLabel('Laptops').check();
+  await expect(page.getByLabel('What are you shopping for?')).toHaveValue('Laptops');
   await page.getByRole('button', { name: 'Refine results' }).click();
-  await expect(page.getByText('applied a $1500 price limit')).toBeVisible();
-  await expect(page.getByText('No catalog matches')).toBeVisible();
+  await expect(page.getByText('kept your earlier requirements and focused the search on laptops')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Apple MacBook Pro 14 Inch Space Grey' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Dell Latitude 5440' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /What kind of product/ })).toHaveCount(0);
+});
+
+test('two ambiguous intents render exactly one clarification prompt', async ({ page }) => {
+  await page.getByLabel('What are you shopping for?').fill('Run the two ambiguous shopping example');
+  await page.getByRole('button', { name: 'Find products' }).click();
+  await expect(page.getByText('A little more detail would help')).toHaveCount(1);
+  await expect(page.getByRole('heading', { name: 'Which product category should I focus on?' })).toHaveCount(1);
+  await expect(page.getByText('Clarification queued', { exact: true })).toBeVisible();
+  await expect(page.getByText('2 intents processed')).toBeVisible();
+  await page.getByLabel('Laptops').check();
+  await page.getByRole('button', { name: 'Refine results' }).click();
+  await expect(page.getByRole('heading', { name: 'Apple MacBook Pro 14 Inch Space Grey' })).toBeVisible();
+  await expect(page.getByText('A little more detail would help')).toHaveCount(1);
+  await expect(page.getByText('Clarification queued', { exact: true })).toHaveCount(0);
 });
 
 test('partial failure keeps the successful sibling visible', async ({ page }) => {
