@@ -4,15 +4,17 @@ Conversational product discovery using a Single Agent, grounded in the DummyJSON
 
 ## Current implementation
 
-Tasks `BAZAK-AAC-001` through `BAZAK-AAC-003`: Next.js App Router foundation, TypeScript domain contracts, runtime product validation, a typed DummyJSON client, stable offline catalog fixtures, and a process-local expiring snapshot cache.
+Tasks `BAZAK-AAC-001` through `BAZAK-AAC-003`, plus the hosted-model boundary from `BAZAK-AAC-006`: Next.js App Router foundation, TypeScript domain contracts, runtime product validation, a typed DummyJSON client, stable offline catalog fixtures, a process-local expiring snapshot cache, and schema-validated Vercel AI SDK catalog tools.
 
-Semantic ranking, Vercel AI SDK integration, multi-intent orchestration, clarification, product cards, retries, and persistence are planned and not yet implemented. No live model calls are made.
+Semantic ranking, multi-intent orchestration, clarification, product cards, retries, and persistence are planned and not yet implemented. The hosted-model boundary is implemented, but the current UI does not invoke it and automated tests make no live model calls.
 
 ## Local setup
 
 Use Node.js 22.12 or newer and npm. Run `npm ci`, then `npm run dev`. Open http://localhost:3000.
 
-The foundation needs no credentials. `.env.example` documents planned provider configuration. When `AI_PROVIDER=openai`, a nonempty server-side `OPENAI_API_KEY` is required. Never put credentials in `NEXT_PUBLIC_*` variables or commit environment files. GPT-5.4-mini is the planned target; access has not been verified.
+The default `AI_PROVIDER=disabled` mode needs no credentials. To enable the hosted boundary, set `AI_PROVIDER=openai` and provide a nonempty server-side `OPENAI_API_KEY`. `OPENAI_MODEL` is intentionally pinned to `gpt-5.4-mini`; the application rejects silent substitution rather than falling back to a different model. Never put credentials in `NEXT_PUBLIC_*` variables or commit environment files.
+
+GPT-5.4-mini access is an environment assumption and has not been verified by the offline suite. `src/lib/agent/` configures three schema-validated, catalog-grounded tools (`searchCatalog`, `getProduct`, and `listCategories`) and stops an AI SDK tool loop after five completed steps. Catalog/provider failures are translated to typed errors; unknown product IDs are rejected before product data can be returned. A future orchestration task will connect this boundary to a server route and shopper UI.
 
 ## Verification
 
@@ -20,7 +22,7 @@ The foundation needs no credentials. `.env.example` documents planned provider c
 - `npm run build`: production compilation.
 - `npm start`: run the production build.
 
-MSW, Playwright, Ollama, and OpenAI evaluation will be introduced by their respective tasks. They are not currently installed or claimed as passing.
+MSW is installed for later boundary simulations. Playwright, Ollama, and live OpenAI evaluation will be introduced by their respective tasks; they are not claimed as passing.
 
 ## Scope and delivery
 
