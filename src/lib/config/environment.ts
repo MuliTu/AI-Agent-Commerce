@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 const environmentSchema = z.object({
   AI_PROVIDER: z.enum(['disabled', 'openai']).default('disabled'),
-  OPENAI_MODEL: z.string().trim().min(1).default('gpt-5.4-mini'),
+  OPENAI_MODEL: z.literal('gpt-5.4-mini').default('gpt-5.4-mini'),
   OPENAI_API_KEY: z.string().trim().optional(),
 }).superRefine((value, context) => {
   if (value.AI_PROVIDER === 'openai' && !value.OPENAI_API_KEY) {

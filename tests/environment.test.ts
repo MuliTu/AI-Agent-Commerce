@@ -11,6 +11,11 @@ describe('server configuration', () => {
   it('rejects whitespace-only credentials', () => {
     expect(() => parseEnvironment({ AI_PROVIDER: 'openai', OPENAI_API_KEY: ' ' })).toThrow('OPENAI_API_KEY');
   });
+  it('rejects silent substitution of the configured model', () => {
+    expect(() => parseEnvironment({
+      AI_PROVIDER: 'openai', OPENAI_MODEL: 'other-model', OPENAI_API_KEY: 'test-only',
+    })).toThrow('OPENAI_MODEL');
+  });
   it('never includes a supplied secret in validation errors', () => {
     try { parseEnvironment({ AI_PROVIDER: 'invalid', OPENAI_API_KEY: 'private-test-value' }); }
     catch (error) { expect(String(error)).not.toContain('private-test-value'); return; }
