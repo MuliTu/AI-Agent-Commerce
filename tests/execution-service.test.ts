@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ConversationExecutionService } from '../src/lib/execution';
+import { ConversationExecutionService, PersistedExecutionError } from '../src/lib/execution';
 import { CommerceRepository, PersistenceConflictError } from '../src/lib/persistence';
 import type { OrchestrationResult } from '../src/lib/orchestration';
 import { createGetHandler, createPostHandler } from '../src/app/api/orchestrate/route';
@@ -127,6 +127,39 @@ describe('orchestration route contracts', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ result });
     expect(execute).toHaveBeenCalledOnce();
+  });
+
+  it('distinguishes an invalid local request from a sanitized upstream provider failure', async () => {
+    const invalidHandler = createPostHandler({ execute: vi.fn() });
+    const invalid = await invalidHandler(new Request('http://local/api/orchestrate', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: '' }),
+    }));
+    expect(invalid.status).toBe(400);
+    await expect(invalid.json()).resolves.toMatchObject({ error: { code: 'invalid_request' } });
+
+    const upstreamHandler = createPostHandler({ execute: vi.fn(async () => {
+      throw new AgentBoundaryError('provider_unavailable', 'The model provider request failed.', false, new Error('private upstream body'));
+    }) });
+    const upstream = await upstreamHandler(new Request('http://local/api/orchestrate', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'Find a laptop', conversationId: 'conversation-upstream', turnId: 'turn-upstream' }),
+    }));
+    expect(upstream.status).toBe(502);
+    await expect(upstream.json()).resolves.toEqual({
+      error: { code: 'provider_unavailable', message: 'The model provider request failed.', retryable: false },
+    });
+  });
+
+  it('returns 502 for a persisted nonretryable provider-unavailable failure', async () => {
+    const upstreamHandler = createPostHandler({ execute: vi.fn(async () => {
+      throw new PersistedExecutionError('provider_unavailable', 'The model provider request failed.', false);
+    }) });
+    const response = await upstreamHandler(new Request('http://local/api/orchestrate', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'Find a laptop', conversationId: 'conversation-replay', turnId: 'turn-replay' }),
+    }));
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'provider_unavailable', retryable: false } });
   });
 
   it('preserves a typed provider error on the first failure and an exact persisted replay', async () => {

@@ -12,7 +12,8 @@ type IntentPlanGenerationOptions = {
   maxOutputTokens?: number;
   providerOptions?: {
     openai: {
-      reasoningEffort: 'none';
+      reasoningEffort?: 'none';
+      strictJsonSchema: false;
     };
   };
 };
@@ -71,9 +72,14 @@ export function createProviderIntentExtractor(options: ProviderIntentExtractorOp
           shopperPrompt: context.prompt,
           previousIntents: context.previousIntents,
         }),
+        providerOptions: {
+          openai: {
+            strictJsonSchema: false,
+            ...(options.environment.LLM_PROVIDER === 'litellm' ? { reasoningEffort: 'none' as const } : {}),
+          },
+        },
         ...(options.environment.LLM_PROVIDER === 'litellm' ? {
           maxOutputTokens: 1000,
-          providerOptions: { openai: { reasoningEffort: 'none' as const } },
         } : {}),
       });
       const plan = extractedTurnPlanSchema.parse(generated);

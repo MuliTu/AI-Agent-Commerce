@@ -59,6 +59,7 @@ describe('provider-backed intent extraction', () => {
     expect(generate).toHaveBeenCalledWith(expect.objectContaining({
       instructions: expect.stringContaining('Never invent an intentId'),
       prompt: expect.stringContaining('Find a photography phone under $700.'),
+      providerOptions: { openai: { strictJsonSchema: false } },
     }));
   });
 
@@ -113,6 +114,30 @@ describe('provider-backed intent extraction', () => {
     expect(localFactory).toHaveBeenCalledWith(
       'qwen3.5-9b', 'local-test-key', 'http://127.0.0.1:4001/v1', 'chat',
     );
+  });
+
+  it('uses compatible non-strict structured output options for local LiteLLM', async () => {
+    const generate = vi.fn(async () => ({
+      intents: [{ goal: 'Laptop', query: 'laptop' }],
+      response: 'I will search for a laptop.',
+    }));
+    const extractIntents = createProviderIntentExtractor({
+      environment: {
+        ...environment,
+        LLM_PROVIDER: 'litellm',
+        LLM_API_KEY: 'local-test-key',
+        LLM_BASE_URL: 'http://127.0.0.1:4001/v1',
+        LLM_MODEL: 'qwen3.5-9b',
+      },
+      generate,
+      modelFactory,
+    });
+
+    await extractIntents({ prompt: 'Find a laptop.', previousIntents: [] });
+    expect(generate).toHaveBeenCalledWith(expect.objectContaining({
+      maxOutputTokens: 1000,
+      providerOptions: { openai: { strictJsonSchema: false, reasoningEffort: 'none' } },
+    }));
   });
 
   it('strips invented intent IDs and keeps exact prior IDs', async () => {

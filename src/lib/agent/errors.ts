@@ -59,7 +59,9 @@ export function toProviderAgentError(error: unknown): AgentBoundaryError {
     }
     return new AgentBoundaryError(
       'provider_unavailable',
-      'The model provider request failed.',
+      status !== undefined && status >= 400 && status < 500
+        ? 'The model provider could not accept the request.'
+        : 'The model provider request failed.',
       status === undefined || status >= 500,
       error,
     );

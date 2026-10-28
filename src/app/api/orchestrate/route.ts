@@ -20,14 +20,22 @@ export function createPostHandler(service: Pick<ConversationExecutionService, 'e
       return NextResponse.json(orchestrationResponseSchema.parse({ result }));
     } catch (error) {
       if (error instanceof AgentBoundaryError) {
-        const status = error.code === 'provider_authentication' ? 503 : error.retryable ? 502 : 400;
+        const status = error.code === 'provider_authentication'
+          ? 503
+          : error.code === 'provider_unavailable' || error.code === 'provider_rate_limit' || error.retryable
+            ? 502
+            : 400;
         return NextResponse.json({ error: { code: error.code, message: error.message, retryable: error.retryable } }, { status });
       }
       if (error instanceof OrchestrationError) {
         return NextResponse.json({ error: { code: error.code, message: error.message, retryable: false } }, { status: 400 });
       }
       if (error instanceof PersistedExecutionError) {
-        const status = error.code === 'provider_authentication' ? 503 : error.retryable ? 502 : 500;
+        const status = error.code === 'provider_authentication'
+          ? 503
+          : error.code === 'provider_unavailable' || error.code === 'provider_rate_limit' || error.retryable
+            ? 502
+            : 500;
         return NextResponse.json({ error: { code: error.code, message: error.message, retryable: error.retryable } }, { status });
       }
       return NextResponse.json({ error: { code: 'orchestration_failed', message: 'The shopping turn could not be completed.', retryable: false } }, { status: 500 });
