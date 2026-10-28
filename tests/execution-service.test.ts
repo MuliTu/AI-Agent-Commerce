@@ -8,6 +8,7 @@ import type { OrchestrationResult } from '../src/lib/orchestration';
 import { createGetHandler, createPostHandler } from '../src/app/api/orchestrate/route';
 import { createConversationsGetHandler, createConversationsPatchHandler } from '../src/app/api/conversations/route';
 import { AgentBoundaryError } from '../src/lib/agent';
+import { toProviderAgentError } from '../src/lib/agent/errors';
 
 const result: OrchestrationResult = {
   turnId: 'turn-1',
@@ -117,6 +118,102 @@ describe('ConversationExecutionService', () => {
 });
 
 describe('orchestration route contracts', () => {
+  it('includes allowlisted diagnostics only in development responses', async () => {
+    const request = () => new Request('http://local/api/orchestrate', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: '' }),
+    });
+    vi.stubEnv('NODE_ENV', 'development');
+    const development = await createPostHandler({ execute: vi.fn() })(request());
+    await expect(development.json()).resolves.toMatchObject({
+      error: { code: 'invalid_request' },
+      diagnostic: { stage: 'request_validation', class: 'request_validation' },
+    });
+
+    vi.stubEnv('NODE_ENV', 'production');
+    const production = await createPostHandler({ execute: vi.fn() })(request());
+    const body = await production.json();
+    expect(body).toMatchObject({ error: { code: 'invalid_request' } });
+    expect(body).not.toHaveProperty('diagnostic');
+    expect(JSON.stringify(body)).not.toContain('private');
+    vi.unstubAllEnvs();
+  });
+
+  it('recognizes cross-module branded provider and persisted failures', async () => {
+    const brandedAgent = Object.assign(new Error('safe provider failure'), {
+      [Symbol.for('bazak.agent.AgentBoundaryError')]: true,
+      code: 'provider_unavailable',
+      retryable: false,
+    });
+    const provider = await createPostHandler({ execute: vi.fn(async () => { throw brandedAgent; }) })(new Request('http://local/api/orchestrate', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'Find a laptop', conversationId: 'branded-provider', turnId: 'turn-provider' }),
+    }));
+    expect(provider.status).toBe(502);
+
+    const brandedPersisted = Object.assign(new Error('safe persisted provider failure'), {
+      [Symbol.for('bazak.execution.PersistedExecutionError')]: true,
+      code: 'provider_unavailable',
+      retryable: false,
+    });
+    const replay = await createPostHandler({ execute: vi.fn(async () => { throw brandedPersisted; }) })(new Request('http://local/api/orchestrate', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'Find a laptop', conversationId: 'branded-replay', turnId: 'turn-replay' }),
+    }));
+    expect(replay.status).toBe(502);
+    await expect(replay.json()).resolves.toMatchObject({ error: { code: 'provider_unavailable', retryable: false } });
+  });
+
+  it('normalizes diagnostics carried by a cross-module branded failure', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const brandedAgent = Object.assign(new Error('safe provider failure'), {
+      [Symbol.for('bazak.agent.AgentBoundaryError')]: true,
+      code: 'provider_unavailable',
+      retryable: false,
+      diagnostic: {
+        stage: 'provider_request', class: 'api_call_error', status: 400,
+        code: 'invalid_json_schema', param: 'text.format.schema',
+        message: 'private response', headers: { authorization: 'secret' },
+      },
+    });
+    const response = await createPostHandler({ execute: vi.fn(async () => { throw brandedAgent; }) })(new Request('http://local/api/orchestrate', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'Find a laptop', conversationId: 'branded-diagnostic', turnId: 'turn-branded-diagnostic' }),
+    }));
+    const body = await response.json();
+    expect(body.diagnostic).toEqual({
+      stage: 'provider_request', class: 'api_call_error', status: 400,
+      code: 'invalid_json_schema', param: 'text.format.schema',
+    });
+    expect(JSON.stringify(body)).not.toContain('private response');
+    expect(JSON.stringify(body)).not.toContain('authorization');
+    vi.unstubAllEnvs();
+  });
+
+  it('surfaces allowlisted API-call diagnostics only in development', async () => {
+    const apiError = Object.assign(new Error('private provider body'), {
+      [Symbol.for('vercel.ai.error.AI_APICallError')]: true,
+      statusCode: 400,
+      data: { error: { code: 'invalid_json_schema', param: 'text.format.schema', message: 'private response' } },
+    });
+    const mapped = toProviderAgentError(apiError);
+    const request = () => new Request('http://local/api/orchestrate', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'Find a laptop', conversationId: 'diagnostic', turnId: 'turn-diagnostic' }),
+    });
+
+    vi.stubEnv('NODE_ENV', 'development');
+    const development = await createPostHandler({ execute: vi.fn(async () => { throw mapped; }) })(request());
+    const developmentBody = await development.json();
+    expect(developmentBody).toMatchObject({
+      diagnostic: { stage: 'provider_request', class: 'api_call_error', status: 400, code: 'invalid_json_schema', param: 'text.format.schema' },
+    });
+    expect(JSON.stringify(developmentBody)).not.toContain('private response');
+
+    vi.stubEnv('NODE_ENV', 'production');
+    const production = await createPostHandler({ execute: vi.fn(async () => { throw mapped; }) })(request());
+    expect(await production.json()).not.toHaveProperty('diagnostic');
+    vi.unstubAllEnvs();
+  });
   it('validates POST input and delegates to the injected execution service', async () => {
     const execute = vi.fn(async () => result);
     const handler = createPostHandler({ execute });

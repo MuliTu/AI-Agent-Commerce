@@ -47,7 +47,7 @@ function notifyAttempt(observer: RetryOptions['onAttempt'], attempt: RetryAttemp
 export function classifyFailure(error: unknown): FailureClassification {
   if (error instanceof ZodError) return { category: 'validation', retryable: false };
 
-  if (error instanceof AgentBoundaryError) {
+  if (AgentBoundaryError.isInstance(error)) {
     if (error.code === 'provider_authentication') {
       return { category: 'authentication', retryable: false };
     }

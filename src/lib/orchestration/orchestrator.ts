@@ -82,7 +82,7 @@ function resolveIntent(
 }
 
 function scopedFailure(intent: ShoppingIntent, error: unknown, terminal = false): IntentOutcome {
-  if (error instanceof AgentBoundaryError) {
+  if (AgentBoundaryError.isInstance(error)) {
     return {
       intent: { ...intent, status: 'failed' },
       products: [],
@@ -144,7 +144,7 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
           });
           plan = extractedTurnPlanSchema.parse(rawPlan);
         } catch (error) {
-          if (error instanceof AgentBoundaryError) throw error;
+          if (AgentBoundaryError.isInstance(error)) throw error;
           if (error instanceof OrchestrationError) throw error;
           throw new OrchestrationError('invalid_plan', 'The model returned an invalid intent plan.', error);
         }

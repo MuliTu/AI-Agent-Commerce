@@ -95,7 +95,7 @@ export function createProviderIntentExtractor(options: ProviderIntentExtractorOp
         )),
       };
     } catch (error) {
-      if (error instanceof AgentBoundaryError) throw error;
+      if (AgentBoundaryError.isInstance(error)) throw error;
       if (error && typeof error === 'object' && 'issues' in error) throw error;
       throw toProviderAgentError(error);
     }

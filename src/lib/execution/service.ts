@@ -22,6 +22,8 @@ export class ConversationNotFoundError extends Error {
   }
 }
 
+const persistedExecutionErrorMarker = Symbol.for('bazak.execution.PersistedExecutionError');
+
 export class PersistedExecutionError extends Error {
   constructor(
     readonly code: string,
@@ -30,6 +32,16 @@ export class PersistedExecutionError extends Error {
   ) {
     super(message);
     this.name = 'PersistedExecutionError';
+    Object.defineProperty(this, persistedExecutionErrorMarker, { value: true });
+  }
+
+  static isInstance(error: unknown): error is PersistedExecutionError {
+    if (error instanceof PersistedExecutionError) return true;
+    if (!error || typeof error !== 'object' || (error as Record<PropertyKey, unknown>)[persistedExecutionErrorMarker] !== true) return false;
+    const candidate = error as { code?: unknown; message?: unknown; retryable?: unknown };
+    return typeof candidate.code === 'string'
+      && typeof candidate.message === 'string'
+      && typeof candidate.retryable === 'boolean';
   }
 }
 
@@ -204,7 +216,7 @@ export class ConversationExecutionService {
     } catch (error) {
       const current = this.repository.getTurn(input.turnId);
       if (current?.status === 'running' || current?.status === 'queued') {
-        const failure = error instanceof AgentBoundaryError
+        const failure = AgentBoundaryError.isInstance(error)
           ? { code: error.code, message: error.message, retryable: error.retryable }
           : error instanceof OrchestrationError
             ? { code: error.code, message: error.message, retryable: false }
