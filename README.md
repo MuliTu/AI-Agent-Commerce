@@ -14,6 +14,8 @@ Use Node.js 22.12 or newer and npm. Run `npm ci`, then `npm run dev`. Open http:
 
 The default `AI_PROVIDER=disabled` mode needs no credentials. To enable the hosted boundary, set `AI_PROVIDER=openai` and provide a nonempty server-side `OPENAI_API_KEY`. `OPENAI_MODEL` is intentionally pinned to `gpt-5.4-mini`; the application rejects silent substitution rather than falling back to a different model. Never put credentials in `NEXT_PUBLIC_*` variables or commit environment files.
 
+On the local-only `local/litellm-testing` branch, `AI_PROVIDER=litellm` uses the OpenAI-compatible endpoint at `http://127.0.0.1:4001/v1` with model `qwen3.5-9b`. Set `LITELLM_API_KEY` only in the ignored `.env`; there is no automatic fallback between providers.
+
 GPT-5.4-mini access is an environment assumption and has not been verified by the offline suite. `src/lib/agent/` configures three schema-validated, catalog-grounded tools (`searchCatalog`, `getProduct`, and `listCategories`) and stops an AI SDK tool loop after five completed steps. Catalog/provider failures are translated to typed errors; unknown product IDs are rejected before product data can be returned. The live route and shopper UI are connected, but the repository contains no credentials and automated tests make no live model calls.
 
 ## Verification

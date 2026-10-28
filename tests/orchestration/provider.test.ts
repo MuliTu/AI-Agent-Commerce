@@ -10,6 +10,8 @@ const environment: Environment = {
   AI_PROVIDER: 'openai',
   OPENAI_API_KEY: 'test-server-key',
   OPENAI_MODEL: 'gpt-5.4-mini',
+  LITELLM_BASE_URL: 'http://127.0.0.1:4001/v1',
+  LITELLM_MODEL: 'qwen3.5-9b',
 };
 
 const product: Product = {
@@ -56,7 +58,7 @@ describe('provider-backed intent extraction', () => {
     });
     expect(result.outcomes[0].products[0].product.id).toBe(7);
     expect(generate).toHaveBeenCalledWith(expect.objectContaining({
-      instructions: expect.stringContaining('Never include product records'),
+      instructions: expect.stringContaining('Never invent an intentId'),
       prompt: expect.stringContaining('Find a photography phone under $700.'),
     }));
   });
@@ -99,5 +101,52 @@ describe('provider-backed intent extraction', () => {
       environment: { ...environment, OPENAI_MODEL: 'other-model' as 'gpt-5.4-mini' },
       modelFactory,
     })).toThrow(expect.objectContaining({ code: 'provider_authentication' }));
+  });
+
+  it('uses the explicit local LiteLLM model and loopback endpoint', () => {
+    const localFactory = vi.fn(() => ({} as LanguageModel));
+    createProviderIntentExtractor({
+      environment: {
+        ...environment,
+        AI_PROVIDER: 'litellm',
+        LITELLM_API_KEY: 'local-test-key',
+        LITELLM_BASE_URL: 'http://127.0.0.1:4001/v1',
+        LITELLM_MODEL: 'qwen3.5-9b',
+      },
+      modelFactory: localFactory,
+    });
+    expect(localFactory).toHaveBeenCalledWith(
+      'qwen3.5-9b', 'local-test-key', 'http://127.0.0.1:4001/v1', 'chat',
+    );
+  });
+
+  it('strips invented intent IDs and keeps exact prior IDs', async () => {
+    const extractIntents = createProviderIntentExtractor({
+      environment,
+      modelFactory,
+      generate: async () => ({
+        intents: [
+          { intentId: 'invented', goal: 'Laptop', query: 'laptop' },
+          { intentId: 'prior:intent:1', query: 'work laptop' },
+        ],
+        response: 'I will search for a laptop.',
+      }),
+    });
+
+    await expect(extractIntents({
+      prompt: 'Make it suitable for work.',
+      previousIntents: [{
+        id: 'prior:intent:1',
+        goal: 'Laptop',
+        query: 'laptop',
+        constraints: {},
+        status: 'needs_clarification',
+      }],
+    })).resolves.toMatchObject({
+      intents: [
+        { intentId: undefined, goal: 'Laptop', query: 'laptop' },
+        { intentId: 'prior:intent:1', query: 'work laptop' },
+      ],
+    });
   });
 });

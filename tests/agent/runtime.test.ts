@@ -14,6 +14,8 @@ const environment: Environment = {
   AI_PROVIDER: 'openai',
   OPENAI_MODEL: 'gpt-5.4-mini',
   OPENAI_API_KEY: 'test-only-key',
+  LITELLM_BASE_URL: 'http://127.0.0.1:4001/v1',
+  LITELLM_MODEL: 'qwen3.5-9b',
 };
 
 describe('commerce agent runtime', () => {
@@ -46,9 +48,12 @@ describe('commerce agent runtime', () => {
 
   it('requires explicit provider access and a nonempty prompt', async () => {
     expect(() => createCommerceAgent({
-      environment: { AI_PROVIDER: 'disabled', OPENAI_MODEL: 'gpt-5.4-mini' },
+      environment: {
+        AI_PROVIDER: 'disabled', OPENAI_MODEL: 'gpt-5.4-mini',
+        LITELLM_BASE_URL: 'http://127.0.0.1:4001/v1', LITELLM_MODEL: 'qwen3.5-9b',
+      },
       catalog,
-    })).toThrow('OpenAI must be explicitly enabled');
+    })).toThrow('A model provider must be explicitly enabled');
 
     const agent = createCommerceAgent({
       environment,
@@ -62,6 +67,25 @@ describe('commerce agent runtime', () => {
     await expect(agent.generate(42 as unknown as string)).rejects.toMatchObject({
       code: 'invalid_tool_output', retryable: false,
     });
+  });
+
+  it('uses LiteLLM explicitly without changing the OpenAI path', () => {
+    const modelFactory = vi.fn(() => ({} as LanguageModel));
+    const agent = createCommerceAgent({
+      environment: {
+        ...environment,
+        AI_PROVIDER: 'litellm',
+        LITELLM_API_KEY: 'local-test-key',
+        LITELLM_BASE_URL: 'http://127.0.0.1:4001/v1',
+        LITELLM_MODEL: 'qwen3.5-9b',
+      },
+      catalog,
+      modelFactory,
+    });
+    expect(agent.modelId).toBe('qwen3.5-9b');
+    expect(modelFactory).toHaveBeenCalledWith(
+      'qwen3.5-9b', 'local-test-key', 'http://127.0.0.1:4001/v1', 'chat',
+    );
   });
 
   it.each([

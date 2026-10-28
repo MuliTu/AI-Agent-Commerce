@@ -26,6 +26,7 @@ test('single intent returns catalog-grounded products', async ({ page }) => {
   await runExample(page, 'Single intent');
   await expect(page.getByRole('heading', { name: 'Find a catalog product' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Apple MacBook Pro 14 Inch Space Grey' })).toBeVisible();
+  await page.getByRole('button', { name: /Requests/ }).click();
   await expect(page.getByText('1 intent processed')).toBeVisible();
 });
 
@@ -35,6 +36,7 @@ test('multi-intent request keeps each goal separate', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Find basketball shoes' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Dell Latitude 5440' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Nike Air Jordan 1 Red And Black' })).toBeVisible();
+  await page.getByRole('button', { name: /Requests/ }).click();
   await expect(page.getByText('2 intents processed')).toBeVisible();
 });
 
@@ -56,6 +58,7 @@ test('two ambiguous intents render exactly one clarification prompt', async ({ p
   await expect(page.getByText('A little more detail would help')).toHaveCount(1);
   await expect(page.getByRole('heading', { name: 'Which product category should I focus on?' })).toHaveCount(1);
   await expect(page.getByText('Clarification queued', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: /Requests/ }).click();
   await expect(page.getByText('2 intents processed')).toBeVisible();
   await page.getByLabel('Laptops').check();
   await page.getByRole('button', { name: 'Refine results' }).click();
