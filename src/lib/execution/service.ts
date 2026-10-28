@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { AgentBoundaryError } from '../agent';
 import type { OrchestrationResult } from '../orchestration/contracts';
+import type { ClarificationAnswer } from '../orchestration/contracts';
 import { OrchestrationError } from '../orchestration/orchestrator';
 import { PersistenceConflictError, type CommerceRepository } from '../persistence';
 import type { ConversationState } from '../orchestration/http';
@@ -11,6 +12,7 @@ export type RunOrchestration = (input: {
   prompt: string;
   previous?: OrchestrationResult;
   retryIntentId?: string;
+  clarification?: ClarificationAnswer;
 }) => Promise<OrchestrationResult>;
 
 type ExecuteInput = Parameters<RunOrchestration>[0];
@@ -51,6 +53,7 @@ function acceptanceFingerprint(input: ExecuteInput): string {
     turnId: input.turnId,
     prompt: input.prompt,
     retryIntentId: input.retryIntentId ?? null,
+    clarification: input.clarification ?? null,
   })).digest('hex');
 }
 

@@ -115,9 +115,62 @@ describe('ConversationExecutionService', () => {
       .toThrow(PersistenceConflictError);
     repository.close();
   });
+
+  it('persists a clarification result as a terminal partial turn', async () => {
+    const clarificationResult: OrchestrationResult = {
+      turnId: 'turn-clarification',
+      status: 'partial',
+      response: 'I need one detail before I can recommend a product.',
+      outcomes: [{
+        intent: {
+          id: 'intent-clarification',
+          goal: 'Find a gift',
+          query: 'gift',
+          constraints: {},
+          status: 'needs_clarification',
+        },
+        products: [],
+        clarification: {
+          field: 'category',
+          question: 'Which product category should I focus on?',
+          options: ['Laptops', 'Fragrances'],
+          reason: 'requested',
+        },
+      }],
+    };
+    const repository = new CommerceRepository(databasePath());
+    const service = new ConversationExecutionService(
+      repository,
+      async () => clarificationResult,
+      () => '2026-10-28T11:00:00.000Z',
+    );
+
+    await expect(service.execute({
+      conversationId: 'conversation-clarification',
+      turnId: 'turn-clarification',
+      prompt: 'Find a gift',
+    })).resolves.toEqual(clarificationResult);
+    expect(service.readConversation('conversation-clarification').turns[0]).toMatchObject({
+      status: 'partial',
+      result: clarificationResult,
+    });
+    repository.close();
+  });
 });
 
 describe('orchestration route contracts', () => {
+  it('classifies a missing conversation ID as request validation', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const response = await createGetHandler({ readConversation: vi.fn() })(new Request('http://local/api/orchestrate'));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: { code: 'invalid_request', message: 'A conversation ID is required.' },
+      diagnostic: { stage: 'request_validation', class: 'request_validation' },
+    });
+    vi.unstubAllEnvs();
+  });
+
   it('includes allowlisted diagnostics only in development responses', async () => {
     const request = () => new Request('http://local/api/orchestrate', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: '' }),
@@ -224,6 +277,32 @@ describe('orchestration route contracts', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ result });
     expect(execute).toHaveBeenCalledOnce();
+  });
+
+  it('returns a terminal clarification result instead of an execution failure', async () => {
+    const clarificationResult: OrchestrationResult = {
+      turnId: 'turn-clarification',
+      status: 'partial',
+      response: 'I need one detail before I can recommend a product.',
+      outcomes: [{
+        intent: {
+          id: 'intent-clarification', goal: 'Find a gift', query: 'gift',
+          constraints: {}, status: 'needs_clarification',
+        },
+        products: [],
+        clarification: {
+          field: 'category', question: 'Which product category should I focus on?',
+          options: ['Laptops', 'Fragrances'], reason: 'requested',
+        },
+      }],
+    };
+    const response = await createPostHandler({ execute: vi.fn(async () => clarificationResult) })(new Request('http://local/api/orchestrate', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'Find a gift', conversationId: 'conversation-clarification', turnId: 'turn-clarification' }),
+    }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ result: clarificationResult });
   });
 
   it('distinguishes an invalid local request from a sanitized upstream provider failure', async () => {

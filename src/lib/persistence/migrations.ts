@@ -103,6 +103,62 @@ export const migrations: readonly Migration[] = [
       ON conversations(archived_at, updated_at DESC, id);
     `,
   },
+  {
+    version: 5,
+    sql: `
+      CREATE TABLE intents_v5 (
+        id TEXT NOT NULL,
+        turn_id TEXT NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL CHECK (position >= 0),
+        goal TEXT NOT NULL,
+        query TEXT NOT NULL,
+        constraints_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('ready', 'needs_clarification', 'completed', 'failed')),
+        PRIMARY KEY(id, turn_id),
+        UNIQUE(turn_id, position)
+      ) STRICT;
+
+      CREATE TABLE tool_runs_v5 (
+        id TEXT PRIMARY KEY,
+        turn_id TEXT NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
+        intent_id TEXT,
+        tool_name TEXT NOT NULL,
+        attempt INTEGER NOT NULL CHECK (attempt > 0),
+        input_json TEXT NOT NULL,
+        output_reference_json TEXT,
+        error_code TEXT,
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        UNIQUE(turn_id, tool_name, attempt, intent_id),
+        FOREIGN KEY(intent_id, turn_id) REFERENCES intents_v5(id, turn_id) ON DELETE CASCADE
+      ) STRICT;
+
+      CREATE TABLE product_snapshots_v5 (
+        id TEXT PRIMARY KEY,
+        turn_id TEXT NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
+        intent_id TEXT NOT NULL,
+        products_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(intent_id, turn_id) REFERENCES intents_v5(id, turn_id) ON DELETE CASCADE
+      ) STRICT;
+
+      INSERT INTO intents_v5 SELECT * FROM intents;
+      INSERT INTO tool_runs_v5 SELECT * FROM tool_runs;
+      INSERT INTO product_snapshots_v5 SELECT * FROM product_snapshots;
+
+      DROP TABLE product_snapshots;
+      DROP TABLE tool_runs;
+      DROP TABLE intents;
+
+      ALTER TABLE intents_v5 RENAME TO intents;
+      ALTER TABLE tool_runs_v5 RENAME TO tool_runs;
+      ALTER TABLE product_snapshots_v5 RENAME TO product_snapshots;
+
+      CREATE INDEX idx_intents_turn_order ON intents(turn_id, position, id);
+      CREATE INDEX idx_tool_runs_turn_order ON tool_runs(turn_id, started_at, attempt, id);
+      CREATE INDEX idx_product_snapshots_turn ON product_snapshots(turn_id, created_at, id);
+    `,
+  },
 ] as const;
 
 export function applyMigrations(database: DatabaseSync): void {

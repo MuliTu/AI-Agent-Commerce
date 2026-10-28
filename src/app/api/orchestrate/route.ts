@@ -94,7 +94,13 @@ export function createGetHandler(service: Pick<ConversationExecutionService, 're
   return async function get(request: Request) {
     const conversationId = new URL(request.url).searchParams.get('conversationId')?.trim();
     if (!conversationId) {
-      return errorResponse({ code: 'invalid_request', message: 'A conversation ID is required.' }, 400, undefined, 'request_validation');
+      return errorResponse(
+        { code: 'invalid_request', message: 'A conversation ID is required.' },
+        400,
+        undefined,
+        'request_validation',
+        { stage: 'request_validation', class: 'request_validation' },
+      );
     }
     try {
       const state = service.readConversation(conversationId);

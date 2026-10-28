@@ -135,7 +135,7 @@ describe('CommerceRepository', () => {
     repository = new CommerceRepository(databasePath);
 
     expect(repository.database.prepare('SELECT version FROM schema_migrations ORDER BY version').all())
-      .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }]);
+      .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }]);
   });
 
   it('round-trips conversations, messages, turns, intents, tools, and snapshots in stable order', () => {
@@ -208,6 +208,50 @@ describe('CommerceRepository', () => {
     expect(repository.listToolRuns(turn.id)).toHaveLength(1);
     expect(repository.listProductSnapshots(turn.id)).toHaveLength(1);
     expect(repository.listMessages(conversation.id)).toHaveLength(2);
+  });
+
+  it('persists the same logical intent across refinement turns', () => {
+    seedTurn();
+    const firstCompletion = completion({
+      status: 'partial',
+      intents: [{
+        ...completion().intents[0],
+        id: 'intent-refined',
+        status: 'needs_clarification',
+      }],
+      toolRuns: [],
+      productSnapshots: [],
+    });
+    repository.completeTurn(firstCompletion);
+
+    const refinementTurn: TurnRecord = {
+      ...turn,
+      id: 'turn-2',
+      idempotencyKey: 'conversation-1:turn-2',
+      createdAt: '2026-10-28T10:03:00.000Z',
+      updatedAt: '2026-10-28T10:03:00.000Z',
+    };
+    repository.createTurn(refinementTurn);
+    repository.completeTurn(completion({
+      turnId: refinementTurn.id,
+      completedAt: '2026-10-28T10:04:00.000Z',
+      assistantMessage: undefined,
+      intents: [{
+        ...firstCompletion.intents[0],
+        turnId: refinementTurn.id,
+        constraints: { category: 'smartphones', maxPrice: 500 },
+        status: 'completed',
+      }],
+      toolRuns: [],
+      productSnapshots: [],
+    }));
+
+    expect(repository.listIntents(turn.id)).toMatchObject([{ id: 'intent-refined', status: 'needs_clarification' }]);
+    expect(repository.listIntents(refinementTurn.id)).toMatchObject([{
+      id: 'intent-refined',
+      status: 'completed',
+      constraints: { category: 'smartphones', maxPrice: 500 },
+    }]);
   });
 
   it('rejects an idempotency key reused for a different turn', () => {
