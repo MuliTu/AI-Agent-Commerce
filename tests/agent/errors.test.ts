@@ -28,4 +28,21 @@ describe('provider transport error mapping', () => {
     });
     expect(mapped.message).not.toContain('privateProvider');
   });
+
+  it('maps branded structured-output failures without leaking generated text', () => {
+    const generated = Object.assign(new Error('private generated response: secret catalog claim'), {
+      name: 'AI_NoObjectGeneratedError',
+      [Symbol.for('vercel.ai.error.AI_NoObjectGeneratedError')]: true,
+      text: 'private generated response: secret catalog claim',
+    });
+    const mapped = toProviderAgentError(generated);
+
+    expect(mapped).toMatchObject({
+      code: 'invalid_tool_output',
+      message: 'The model provider returned output that did not match the required schema.',
+      retryable: false,
+    });
+    expect(mapped.message).not.toContain('secret catalog claim');
+    expect(mapped.cause).toBeUndefined();
+  });
 });

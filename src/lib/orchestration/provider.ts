@@ -10,6 +10,7 @@ type IntentPlanGenerationOptions = {
   instructions: string;
   prompt: string;
   maxOutputTokens?: number;
+  maxRetries?: number;
   providerOptions?: {
     openai: {
       reasoningEffort?: 'none';
@@ -72,6 +73,7 @@ export function createProviderIntentExtractor(options: ProviderIntentExtractorOp
           shopperPrompt: context.prompt,
           previousIntents: context.previousIntents,
         }),
+        maxRetries: 0,
         providerOptions: {
           openai: {
             strictJsonSchema: false,

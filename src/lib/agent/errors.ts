@@ -1,4 +1,4 @@
-import { APICallError } from 'ai';
+import { APICallError, NoObjectGeneratedError } from 'ai';
 import { CatalogError } from '../catalog';
 
 const retryableTransportCodes = new Set(['ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'ECONNRESET']);
@@ -49,6 +49,13 @@ export function toCatalogAgentError(error: unknown): AgentBoundaryError {
 
 export function toProviderAgentError(error: unknown): AgentBoundaryError {
   if (error instanceof AgentBoundaryError) return error;
+  if (NoObjectGeneratedError.isInstance(error)) {
+    return new AgentBoundaryError(
+      'invalid_tool_output',
+      'The model provider returned output that did not match the required schema.',
+      false,
+    );
+  }
   if (APICallError.isInstance(error)) {
     const status = error.statusCode;
     if (status === 401 || status === 403) {

@@ -59,6 +59,7 @@ describe('provider-backed intent extraction', () => {
     expect(generate).toHaveBeenCalledWith(expect.objectContaining({
       instructions: expect.stringContaining('Never invent an intentId'),
       prompt: expect.stringContaining('Find a photography phone under $700.'),
+      maxRetries: 0,
       providerOptions: { openai: { strictJsonSchema: false } },
     }));
   });
@@ -136,6 +137,7 @@ describe('provider-backed intent extraction', () => {
     await extractIntents({ prompt: 'Find a laptop.', previousIntents: [] });
     expect(generate).toHaveBeenCalledWith(expect.objectContaining({
       maxOutputTokens: 1000,
+      maxRetries: 0,
       providerOptions: { openai: { strictJsonSchema: false, reasoningEffort: 'none' } },
     }));
   });
