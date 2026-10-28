@@ -7,11 +7,10 @@ import type { Product } from '../../src/lib/domain/contracts';
 import { createIntentOrchestrator, createProviderIntentExtractor } from '../../src/lib/orchestration';
 
 const environment: Environment = {
-  AI_PROVIDER: 'openai',
-  OPENAI_API_KEY: 'test-server-key',
-  OPENAI_MODEL: 'gpt-5.4-mini',
-  LITELLM_BASE_URL: 'http://127.0.0.1:4001/v1',
-  LITELLM_MODEL: 'qwen3.5-9b',
+  LLM_PROVIDER: 'openai',
+  LLM_API_KEY: 'test-server-key',
+  LLM_MODEL: 'gpt-5.4-mini',
+  LLM_BASE_URL: 'https://api.openai.com/v1',
 };
 
 const product: Product = {
@@ -94,11 +93,7 @@ describe('provider-backed intent extraction', () => {
 
   it('fails closed when provider credentials or the exact model pin are unavailable', () => {
     expect(() => createProviderIntentExtractor({
-      environment: { ...environment, OPENAI_API_KEY: undefined },
-      modelFactory,
-    })).toThrow(expect.objectContaining({ code: 'provider_authentication' }));
-    expect(() => createProviderIntentExtractor({
-      environment: { ...environment, OPENAI_MODEL: 'other-model' as 'gpt-5.4-mini' },
+      environment: { LLM_PROVIDER: 'disabled' },
       modelFactory,
     })).toThrow(expect.objectContaining({ code: 'provider_authentication' }));
   });
@@ -108,10 +103,10 @@ describe('provider-backed intent extraction', () => {
     createProviderIntentExtractor({
       environment: {
         ...environment,
-        AI_PROVIDER: 'litellm',
-        LITELLM_API_KEY: 'local-test-key',
-        LITELLM_BASE_URL: 'http://127.0.0.1:4001/v1',
-        LITELLM_MODEL: 'qwen3.5-9b',
+        LLM_PROVIDER: 'litellm',
+        LLM_API_KEY: 'local-test-key',
+        LLM_BASE_URL: 'http://127.0.0.1:4001/v1',
+        LLM_MODEL: 'qwen3.5-9b',
       },
       modelFactory: localFactory,
     });

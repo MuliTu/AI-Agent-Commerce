@@ -1,25 +1,41 @@
 import { z } from 'zod';
 
-const environmentSchema = z.object({
-  AI_PROVIDER: z.enum(['disabled', 'openai', 'litellm']).default('disabled'),
-  OPENAI_MODEL: z.literal('gpt-5.4-mini').default('gpt-5.4-mini'),
-  OPENAI_API_KEY: z.string().trim().optional(),
-  LITELLM_BASE_URL: z.literal('http://127.0.0.1:4001/v1').default('http://127.0.0.1:4001/v1'),
-  LITELLM_MODEL: z.literal('qwen3.5-9b').default('qwen3.5-9b'),
-  LITELLM_API_KEY: z.string().trim().optional(),
-}).superRefine((value, context) => {
-  if (value.AI_PROVIDER === 'openai' && !value.OPENAI_API_KEY) {
-    context.addIssue({ code: 'custom', path: ['OPENAI_API_KEY'], message: 'Required when AI_PROVIDER=openai' });
-  }
-  if (value.AI_PROVIDER === 'litellm' && !value.LITELLM_API_KEY) {
-    context.addIssue({ code: 'custom', path: ['LITELLM_API_KEY'], message: 'Required when AI_PROVIDER=litellm' });
-  }
-});
+export const OPENAI_MODEL = 'gpt-5.4-mini' as const;
+export const OPENAI_BASE_URL = 'https://api.openai.com/v1' as const;
+export const LITELLM_MODEL = 'qwen3.5-9b' as const;
+export const LITELLM_BASE_URL = 'http://127.0.0.1:4001/v1' as const;
+
+const credential = z.string().trim().min(1);
+
+const environmentSchema = z.discriminatedUnion('LLM_PROVIDER', [
+  z.object({
+    LLM_PROVIDER: z.literal('disabled'),
+    LLM_API_KEY: z.string().trim().optional(),
+    LLM_MODEL: z.string().trim().optional(),
+    LLM_BASE_URL: z.string().trim().optional(),
+  }),
+  z.object({
+    LLM_PROVIDER: z.literal('openai'),
+    LLM_API_KEY: credential,
+    LLM_MODEL: z.literal(OPENAI_MODEL).default(OPENAI_MODEL),
+    LLM_BASE_URL: z.literal(OPENAI_BASE_URL).default(OPENAI_BASE_URL),
+  }),
+  z.object({
+    LLM_PROVIDER: z.literal('litellm'),
+    LLM_API_KEY: credential,
+    LLM_MODEL: z.literal(LITELLM_MODEL).default(LITELLM_MODEL),
+    LLM_BASE_URL: z.literal(LITELLM_BASE_URL).default(LITELLM_BASE_URL),
+  }),
+]);
 
 export type Environment = z.infer<typeof environmentSchema>;
+export type ConfiguredEnvironment = Exclude<Environment, { LLM_PROVIDER: 'disabled' }>;
 
 export function parseEnvironment(input: Record<string, string | undefined>): Environment {
-  const result = environmentSchema.safeParse(input);
+  const result = environmentSchema.safeParse({
+    ...input,
+    LLM_PROVIDER: input.LLM_PROVIDER ?? 'disabled',
+  });
   if (!result.success) {
     const issues = result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`);
     throw new Error(`Invalid server configuration: ${issues.join('; ')}`);
@@ -28,5 +44,11 @@ export function parseEnvironment(input: Record<string, string | undefined>): Env
 }
 
 export function getProviderLabel(environment: Environment): string {
-  return environment.AI_PROVIDER === 'litellm' ? 'Local LiteLLM / Qwen' : 'Live OpenAI';
+  if (environment.LLM_PROVIDER === 'litellm') return 'Local LiteLLM / Qwen';
+  if (environment.LLM_PROVIDER === 'openai') return 'OpenAI / GPT-5.4-mini';
+  return 'Model configuration required';
+}
+
+export function isProviderConfigured(environment: Environment): environment is ConfiguredEnvironment {
+  return environment.LLM_PROVIDER !== 'disabled';
 }

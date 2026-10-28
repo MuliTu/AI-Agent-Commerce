@@ -11,7 +11,7 @@ export async function POST(request: Request) {
   }
   try {
     const result = await runLiveOrchestration(parsed.data);
-    return NextResponse.json(orchestrationResponseSchema.parse({ mode: 'live', result }));
+    return NextResponse.json(orchestrationResponseSchema.parse({ result }));
   } catch (error) {
     if (error instanceof AgentBoundaryError) {
       const status = error.code === 'provider_authentication' ? 503 : error.retryable ? 502 : 400;

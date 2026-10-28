@@ -11,11 +11,10 @@ const catalog = {
 } satisfies AgentCatalogClient;
 
 const environment: Environment = {
-  AI_PROVIDER: 'openai',
-  OPENAI_MODEL: 'gpt-5.4-mini',
-  OPENAI_API_KEY: 'test-only-key',
-  LITELLM_BASE_URL: 'http://127.0.0.1:4001/v1',
-  LITELLM_MODEL: 'qwen3.5-9b',
+  LLM_PROVIDER: 'openai',
+  LLM_MODEL: 'gpt-5.4-mini',
+  LLM_API_KEY: 'test-only-key',
+  LLM_BASE_URL: 'https://api.openai.com/v1',
 };
 
 describe('commerce agent runtime', () => {
@@ -26,7 +25,9 @@ describe('commerce agent runtime', () => {
 
     await expect(agent.generate('Find a phone')).resolves.toBe('Catalog-grounded answer');
     expect(agent.modelId).toBe('gpt-5.4-mini');
-    expect(modelFactory).toHaveBeenCalledWith('gpt-5.4-mini', 'test-only-key');
+    expect(modelFactory).toHaveBeenCalledWith(
+      'gpt-5.4-mini', 'test-only-key', 'https://api.openai.com/v1', 'responses',
+    );
     const request = generate.mock.calls[0]?.[0];
     expect(Object.keys(request?.tools ?? {})).toEqual(['searchCatalog', 'getProduct', 'listCategories']);
   });
@@ -49,8 +50,7 @@ describe('commerce agent runtime', () => {
   it('requires explicit provider access and a nonempty prompt', async () => {
     expect(() => createCommerceAgent({
       environment: {
-        AI_PROVIDER: 'disabled', OPENAI_MODEL: 'gpt-5.4-mini',
-        LITELLM_BASE_URL: 'http://127.0.0.1:4001/v1', LITELLM_MODEL: 'qwen3.5-9b',
+        LLM_PROVIDER: 'disabled',
       },
       catalog,
     })).toThrow('A model provider must be explicitly enabled');
@@ -74,10 +74,10 @@ describe('commerce agent runtime', () => {
     const agent = createCommerceAgent({
       environment: {
         ...environment,
-        AI_PROVIDER: 'litellm',
-        LITELLM_API_KEY: 'local-test-key',
-        LITELLM_BASE_URL: 'http://127.0.0.1:4001/v1',
-        LITELLM_MODEL: 'qwen3.5-9b',
+        LLM_PROVIDER: 'litellm',
+        LLM_API_KEY: 'local-test-key',
+        LLM_BASE_URL: 'http://127.0.0.1:4001/v1',
+        LLM_MODEL: 'qwen3.5-9b',
       },
       catalog,
       modelFactory,

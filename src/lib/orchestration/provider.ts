@@ -1,8 +1,8 @@
 import { generateText, Output, type LanguageModel } from 'ai';
-import { AgentBoundaryError, COMMERCE_MODEL } from '../agent';
+import { AgentBoundaryError } from '../agent';
 import { toProviderAgentError } from '../agent/errors';
 import { createProviderModel, type ModelFactory } from '../agent/model';
-import type { Environment } from '../config/environment';
+import { isProviderConfigured, type Environment } from '../config/environment';
 import { extractedTurnPlanSchema, type IntentExtractor } from './contracts';
 
 type IntentPlanGenerationOptions = {
@@ -46,32 +46,20 @@ async function defaultGenerate({ model, ...options }: IntentPlanGenerationOption
 }
 
 export function createProviderIntentExtractor(options: ProviderIntentExtractorOptions): IntentExtractor {
-  if (options.environment.AI_PROVIDER === 'disabled') {
+  if (!isProviderConfigured(options.environment)) {
     throw new AgentBoundaryError(
       'provider_authentication',
       'A model provider must be explicitly enabled with a server-side credential.',
       false,
     );
   }
-  if (options.environment.AI_PROVIDER === 'openai'
-    && (!options.environment.OPENAI_API_KEY || options.environment.OPENAI_MODEL !== COMMERCE_MODEL)) {
-    throw new AgentBoundaryError('provider_authentication', 'OpenAI configuration is invalid.', false);
-  }
-  if (options.environment.AI_PROVIDER === 'litellm'
-    && (!options.environment.LITELLM_API_KEY
-      || options.environment.LITELLM_MODEL !== 'qwen3.5-9b'
-      || options.environment.LITELLM_BASE_URL !== 'http://127.0.0.1:4001/v1')) {
-    throw new AgentBoundaryError('provider_authentication', 'LiteLLM configuration is invalid.', false);
-  }
   const modelFactory = options.modelFactory ?? createProviderModel;
-  const model = options.environment.AI_PROVIDER === 'openai'
-    ? modelFactory(options.environment.OPENAI_MODEL, options.environment.OPENAI_API_KEY!)
-    : modelFactory(
-      options.environment.LITELLM_MODEL,
-      options.environment.LITELLM_API_KEY!,
-      options.environment.LITELLM_BASE_URL,
-      'chat',
-    );
+  const model = modelFactory(
+    options.environment.LLM_MODEL,
+    options.environment.LLM_API_KEY,
+    options.environment.LLM_BASE_URL,
+    options.environment.LLM_PROVIDER === 'litellm' ? 'chat' : 'responses',
+  );
   const generator = options.generate ?? defaultGenerate;
 
   return async (context) => {
@@ -83,7 +71,7 @@ export function createProviderIntentExtractor(options: ProviderIntentExtractorOp
           shopperPrompt: context.prompt,
           previousIntents: context.previousIntents,
         }),
-        ...(options.environment.AI_PROVIDER === 'litellm' ? {
+        ...(options.environment.LLM_PROVIDER === 'litellm' ? {
           maxOutputTokens: 1000,
           providerOptions: { openai: { reasoningEffort: 'none' as const } },
         } : {}),

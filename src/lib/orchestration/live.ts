@@ -1,4 +1,5 @@
 import { DummyJsonCatalogClient } from '../catalog';
+import { AgentBoundaryError } from '../agent';
 import { parseEnvironment } from '../config/environment';
 import { createIntentOrchestrator } from './orchestrator';
 import { createProviderIntentExtractor } from './provider';
@@ -10,7 +11,16 @@ export async function runLiveOrchestration(input: {
   prompt: string;
   previous?: OrchestrationResult;
 }): Promise<OrchestrationResult> {
-  const environment = parseEnvironment(process.env);
+  let environment;
+  try {
+    environment = parseEnvironment(process.env);
+  } catch {
+    throw new AgentBoundaryError(
+      'provider_authentication',
+      'The model provider is not configured correctly.',
+      false,
+    );
+  }
   const extractIntents = createProviderIntentExtractor({ environment });
   const catalog = new DummyJsonCatalogClient();
   return createIntentOrchestrator({ catalog, extractIntents }).run(input);

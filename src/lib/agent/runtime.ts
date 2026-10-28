@@ -1,5 +1,5 @@
 import { generateText, stepCountIs, type LanguageModel, type StopCondition, type ToolSet } from 'ai';
-import type { Environment } from '../config/environment';
+import { isProviderConfigured, type Environment } from '../config/environment';
 import type { AgentCatalogClient } from './tools';
 import { createCatalogTools } from './tools';
 import { AgentBoundaryError, toProviderAgentError } from './errors';
@@ -27,36 +27,22 @@ export type CommerceAgentOptions = {
 };
 
 export function createCommerceAgent(options: CommerceAgentOptions) {
-  if (options.environment.AI_PROVIDER === 'disabled') {
+  if (!isProviderConfigured(options.environment)) {
     throw new AgentBoundaryError(
       'provider_authentication',
       'A model provider must be explicitly enabled with a server-side credential.',
       false,
     );
   }
-  if (options.environment.AI_PROVIDER === 'openai'
-    && (!options.environment.OPENAI_API_KEY || options.environment.OPENAI_MODEL !== COMMERCE_MODEL)) {
-    throw new AgentBoundaryError('provider_authentication', 'OpenAI configuration is invalid.', false);
-  }
-  if (options.environment.AI_PROVIDER === 'litellm'
-    && (!options.environment.LITELLM_API_KEY
-      || options.environment.LITELLM_MODEL !== 'qwen3.5-9b'
-      || options.environment.LITELLM_BASE_URL !== 'http://127.0.0.1:4001/v1')) {
-    throw new AgentBoundaryError('provider_authentication', 'LiteLLM configuration is invalid.', false);
-  }
   const modelFactory = options.modelFactory ?? createProviderModel;
   const generator = options.generate ?? generateText;
-  const modelId = options.environment.AI_PROVIDER === 'openai'
-    ? options.environment.OPENAI_MODEL
-    : options.environment.LITELLM_MODEL;
-  const model = options.environment.AI_PROVIDER === 'openai'
-    ? modelFactory(modelId, options.environment.OPENAI_API_KEY!)
-    : modelFactory(
-      modelId,
-      options.environment.LITELLM_API_KEY!,
-      options.environment.LITELLM_BASE_URL,
-      'chat',
-    );
+  const modelId = options.environment.LLM_MODEL;
+  const model = modelFactory(
+    modelId,
+    options.environment.LLM_API_KEY,
+    options.environment.LLM_BASE_URL,
+    options.environment.LLM_PROVIDER === 'litellm' ? 'chat' : 'responses',
+  );
   const tools = createCatalogTools(options.catalog);
 
   return {

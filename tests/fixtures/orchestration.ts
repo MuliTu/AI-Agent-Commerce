@@ -1,11 +1,11 @@
-import { AgentBoundaryError, type AgentCatalogClient } from '../agent';
-import { productSchema, type Product } from '../domain/contracts';
+import { AgentBoundaryError, type AgentCatalogClient } from '../../src/lib/agent';
+import { productSchema, type Product } from '../../src/lib/domain/contracts';
 import {
   createIntentOrchestrator,
   extractedTurnPlanSchema,
   type IntentExtractionContext,
   type OrchestrationResult,
-} from '../orchestration';
+} from '../../src/lib/orchestration';
 
 const products = productSchema.array().parse([
   { id: 78, title: 'Apple MacBook Pro 14 Inch Space Grey', description: 'A compact professional laptop.', category: 'laptops', price: 1999.99, rating: 4.8, stock: 3, tags: ['laptops', 'apple', 'work'], brand: 'Apple', thumbnail: 'https://cdn.dummyjson.com/product-images/laptops/apple-macbook-pro-14-inch-space-grey/thumbnail.webp', availabilityStatus: 'Low Stock' },
@@ -39,7 +39,7 @@ function plan(context: IntentExtractionContext) {
       response: 'I kept the successful catalog result visible and isolated the failed search.',
       intents: [
         { goal: 'Find a work laptop', query: 'laptop', constraints: {}, status: 'ready' },
-        { goal: 'Unavailable catalog search', query: 'unavailable-demo', constraints: {}, status: 'ready' },
+        { goal: 'Unavailable catalog search', query: 'unavailable-test', constraints: {}, status: 'ready' },
       ],
     });
   }
@@ -48,7 +48,7 @@ function plan(context: IntentExtractionContext) {
       response: 'I kept the successful result visible while isolating a retryable catalog failure.',
       intents: [
         { goal: 'Find a work laptop', query: 'laptop', constraints: {}, status: 'ready' },
-        { goal: 'Retry a limited catalog', query: 'retry-permanent-demo', constraints: {}, status: 'ready' },
+        { goal: 'Retry a limited catalog', query: 'retry-permanent-test', constraints: {}, status: 'ready' },
       ],
     });
   }
@@ -105,7 +105,7 @@ function matchingProducts(query: string): Product[] {
 
 const catalog: AgentCatalogClient = {
   async searchProducts({ query, limit = 20 }) {
-    if (query === 'unavailable-demo' || query === 'retry-permanent-demo') {
+    if (query === 'unavailable-test' || query === 'retry-permanent-test') {
       throw new AgentBoundaryError('catalog_unavailable', 'This catalog search is temporarily unavailable.', true);
     }
     const matches = matchingProducts(query).slice(0, limit);
@@ -117,11 +117,11 @@ const catalog: AgentCatalogClient = {
     return product;
   },
   async listCategories() {
-    return [...new Set(products.map(({ category }) => category))].map((slug) => ({ slug, name: slug, url: `demo://${slug}` }));
+    return [...new Set(products.map(({ category }) => category))].map((slug) => ({ slug, name: slug, url: `test://${slug}` }));
   },
 };
 
-export async function runDemoOrchestration(input: {
+export async function runTestOrchestration(input: {
   turnId: string;
   conversationId: string;
   prompt: string;
@@ -132,10 +132,10 @@ export async function runDemoOrchestration(input: {
   const retryCatalog: AgentCatalogClient = input.retryIntentId ? {
     ...catalog,
     async searchProducts(request) {
-      if (request.query === 'unavailable-demo') {
+      if (request.query === 'unavailable-test') {
         return { products: products.filter((product) => product.category === 'beauty'), total: 1, skip: 0, limit: request.limit ?? 20 };
       }
-      if (request.query === 'retry-permanent-demo') {
+      if (request.query === 'retry-permanent-test') {
         throw new AgentBoundaryError('unknown_product', 'This catalog request cannot be retried safely.', false);
       }
       return catalog.searchProducts(request);

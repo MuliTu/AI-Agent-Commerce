@@ -17,7 +17,7 @@ export default defineConfig({
     reuseExistingServer: false,
     timeout: 120_000,
     env: {
-      AI_PROVIDER: 'disabled',
+      LLM_PROVIDER: 'disabled',
     },
   },
 });

@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { runTestOrchestration } from '../fixtures/orchestration';
 
 async function runExample(page: import('@playwright/test').Page, name: string) {
   await page.getByRole('button', { name }).click();
@@ -6,10 +7,19 @@ async function runExample(page: import('@playwright/test').Page, name: string) {
 }
 
 test.beforeEach(async ({ page }) => {
+  await page.route('**/api/orchestrate', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    const input = route.request().postDataJSON();
+    const result = await runTestOrchestration(input);
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ result }),
+    });
+  });
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Find products through conversation.' })).toBeVisible();
-  await expect(page.getByText('Demo mode is explicit:', { exact: false })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Live OpenAI' })).toBeDisabled();
+  await expect(page.getByRole('alert').filter({ hasText: 'Model configuration required' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Demo' })).toHaveCount(0);
 });
 
 test('disabled live mode fails honestly and never falls back to demo', async ({ request }) => {
@@ -112,7 +122,7 @@ test('empty catalog results are announced and offer one focused next step', asyn
 test('same-tick double activation sends only one shopping request', async ({ page }) => {
   let requests = 0;
   page.on('request', (request) => {
-    if (request.method() === 'POST' && request.url().endsWith('/api/demo/orchestrate')) requests += 1;
+    if (request.method() === 'POST' && request.url().endsWith('/api/orchestrate')) requests += 1;
   });
   const submit = page.getByRole('button', { name: 'Find products' });
   await submit.evaluate((button) => {
