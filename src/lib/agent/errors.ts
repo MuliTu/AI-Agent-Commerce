@@ -1,6 +1,19 @@
 import { APICallError } from 'ai';
 import { CatalogError } from '../catalog';
 
+const retryableTransportCodes = new Set(['ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'ECONNRESET']);
+
+function isRetryableTransportFailure(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current && typeof current === 'object'; depth += 1) {
+    if (current instanceof TypeError && current.message.trim().toLowerCase() === 'fetch failed') return true;
+    const code = 'code' in current ? (current as { code?: unknown }).code : undefined;
+    if (typeof code === 'string' && retryableTransportCodes.has(code.toUpperCase())) return true;
+    current = 'cause' in current ? (current as { cause?: unknown }).cause : undefined;
+  }
+  return false;
+}
+
 export type AgentErrorCode =
   | 'provider_authentication'
   | 'provider_rate_limit'
@@ -51,5 +64,11 @@ export function toProviderAgentError(error: unknown): AgentBoundaryError {
       error,
     );
   }
-  return new AgentBoundaryError('provider_unavailable', 'The model provider request failed.', false, error);
+  const retryable = isRetryableTransportFailure(error);
+  return new AgentBoundaryError(
+    'provider_unavailable',
+    retryable ? 'The model provider is temporarily unreachable. Try again.' : 'The model provider request failed.',
+    retryable,
+    error,
+  );
 }
