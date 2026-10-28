@@ -3,7 +3,7 @@ import { AgentBoundaryError } from '../agent';
 import { toProviderAgentError } from '../agent/errors';
 import { createProviderModel, type ModelFactory } from '../agent/model';
 import { isProviderConfigured, type Environment } from '../config/environment';
-import { extractedTurnPlanSchema, type IntentExtractor } from './contracts';
+import { extractedTurnPlanSchema, providerExtractedTurnPlanSchema, type IntentExtractor } from './contracts';
 
 type IntentPlanGenerationOptions = {
   model: LanguageModel;
@@ -14,7 +14,7 @@ type IntentPlanGenerationOptions = {
   providerOptions?: {
     openai: {
       reasoningEffort?: 'none';
-      strictJsonSchema: false;
+      strictJsonSchema: boolean;
     };
   };
 };
@@ -29,8 +29,9 @@ export type ProviderIntentExtractorOptions = {
 
 const instructions = `Extract one or more shopping intents from the shopper turn.
 Return only the requested structured object.
-Never invent an intentId. Omit intentId for new intents; when refining prior state, use only an exact ID supplied in previousIntents.
+Never invent an intentId. Use null for new intents; when refining prior state, use only an exact ID supplied in previousIntents.
 Every new intent must include both a concise goal and a catalog search query.
+Use null for any unavailable optional intent or constraint value; include every field requested by the schema.
 Never include product records, product IDs, prices, or other catalog facts in the intent plan.
 Product data is fetched and validated separately by deterministic application code.`;
 
@@ -38,7 +39,7 @@ async function defaultGenerate({ model, ...options }: IntentPlanGenerationOption
   const result = await generateText({
     model,
     output: Output.object({
-      schema: extractedTurnPlanSchema,
+      schema: providerExtractedTurnPlanSchema,
       name: 'shopping_intent_plan',
       description: 'A validated single-agent plan containing separate shopping intents.',
     }),
@@ -76,7 +77,7 @@ export function createProviderIntentExtractor(options: ProviderIntentExtractorOp
         maxRetries: 0,
         providerOptions: {
           openai: {
-            strictJsonSchema: false,
+            strictJsonSchema: options.environment.LLM_PROVIDER !== 'litellm',
             ...(options.environment.LLM_PROVIDER === 'litellm' ? { reasoningEffort: 'none' as const } : {}),
           },
         },

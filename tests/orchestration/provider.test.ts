@@ -1,10 +1,15 @@
 import type { LanguageModel } from 'ai';
 import { describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { AgentBoundaryError } from '../../src/lib/agent';
 import type { CatalogPage } from '../../src/lib/catalog';
 import type { Environment } from '../../src/lib/config/environment';
 import type { Product } from '../../src/lib/domain/contracts';
-import { createIntentOrchestrator, createProviderIntentExtractor } from '../../src/lib/orchestration';
+import {
+  createIntentOrchestrator,
+  createProviderIntentExtractor,
+  providerExtractedTurnPlanSchema,
+} from '../../src/lib/orchestration';
 
 const environment: Environment = {
   LLM_PROVIDER: 'openai',
@@ -60,8 +65,59 @@ describe('provider-backed intent extraction', () => {
       instructions: expect.stringContaining('Never invent an intentId'),
       prompt: expect.stringContaining('Find a photography phone under $700.'),
       maxRetries: 0,
-      providerOptions: { openai: { strictJsonSchema: false } },
+      providerOptions: { openai: { strictJsonSchema: true } },
     }));
+  });
+
+  it('uses an OpenAI-compatible required-and-nullable wire schema', () => {
+    const jsonSchema = z.toJSONSchema(providerExtractedTurnPlanSchema, {
+      target: 'draft-7',
+      io: 'input',
+      reused: 'inline',
+    }) as {
+      required?: string[];
+      properties?: {
+        intents?: {
+          items?: {
+            required?: string[];
+            properties?: { constraints?: { required?: string[] } };
+          };
+        };
+      };
+    };
+    expect(jsonSchema.required).toEqual(['intents', 'response']);
+    expect(jsonSchema.properties?.intents?.items?.required).toEqual([
+      'intentId', 'goal', 'query', 'constraints', 'status',
+    ]);
+    expect(jsonSchema.properties?.intents?.items?.properties?.constraints?.required).toEqual([
+      'maxPrice', 'minRating', 'category', 'inStock', 'brands', 'requiredTags',
+    ]);
+
+    expect(providerExtractedTurnPlanSchema.parse({
+      intents: [{
+        intentId: null,
+        goal: 'Laptop',
+        query: 'laptop',
+        constraints: {
+          maxPrice: 500,
+          minRating: 4,
+          category: null,
+          inStock: null,
+          brands: null,
+          requiredTags: null,
+        },
+        status: 'ready',
+      }],
+      response: 'I will search for a laptop.',
+    })).toEqual({
+      intents: [{
+        goal: 'Laptop',
+        query: 'laptop',
+        constraints: { maxPrice: 500, minRating: 4 },
+        status: 'ready',
+      }],
+      response: 'I will search for a laptop.',
+    });
   });
 
   it('maps malformed structured provider output to an invalid plan', async () => {

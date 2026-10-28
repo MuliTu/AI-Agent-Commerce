@@ -24,6 +24,46 @@ export const extractedTurnPlanSchema = z.object({
   response: z.string().trim().min(1),
 }).strict();
 
+const providerIntentConstraintsSchema = z.object({
+  maxPrice: z.number().nonnegative().nullable(),
+  minRating: z.number().min(0).max(5).nullable(),
+  category: z.string().trim().min(1).nullable(),
+  inStock: z.boolean().nullable(),
+  brands: z.array(z.string().trim().min(1)).min(1).nullable(),
+  requiredTags: z.array(z.string().trim().min(1)).min(1).nullable(),
+}).strict().transform((constraints) => ({
+  ...(constraints.maxPrice === null ? {} : { maxPrice: constraints.maxPrice }),
+  ...(constraints.minRating === null ? {} : { minRating: constraints.minRating }),
+  ...(constraints.category === null ? {} : { category: constraints.category }),
+  ...(constraints.inStock === null ? {} : { inStock: constraints.inStock }),
+  ...(constraints.brands === null ? {} : { brands: constraints.brands }),
+  ...(constraints.requiredTags === null ? {} : { requiredTags: constraints.requiredTags }),
+}));
+
+const providerExtractedIntentSchema = z.object({
+  intentId: z.string().trim().min(1).nullable(),
+  goal: z.string().trim().min(1).nullable(),
+  query: z.string().trim().min(1).nullable(),
+  constraints: providerIntentConstraintsSchema,
+  status: z.enum(['ready', 'needs_clarification']),
+}).strict().transform((intent) => ({
+  ...(intent.intentId === null ? {} : { intentId: intent.intentId }),
+  ...(intent.goal === null ? {} : { goal: intent.goal }),
+  ...(intent.query === null ? {} : { query: intent.query }),
+  constraints: intent.constraints,
+  status: intent.status,
+}));
+
+/**
+ * Provider-facing wire schema. OpenAI structured outputs require every object
+ * property to be required, so optional domain values are nullable on the wire
+ * and normalized back to the application shape.
+ */
+export const providerExtractedTurnPlanSchema = z.object({
+  intents: z.array(providerExtractedIntentSchema).min(1).max(8),
+  response: z.string().trim().min(1),
+}).strict();
+
 const shoppingIntentSchema = z.object({
   id: z.string().trim().min(1),
   goal: z.string().trim().min(1),

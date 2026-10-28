@@ -1,6 +1,7 @@
 export {
   extractedIntentSchema,
   extractedTurnPlanSchema,
+  providerExtractedTurnPlanSchema,
   intentConstraintsSchema,
   orchestrationResultSchema,
   type ExtractedIntent,
