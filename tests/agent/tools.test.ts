@@ -23,11 +23,15 @@ const product: Product = {
 
 function createClient(overrides: {
   searchProducts?: () => Promise<CatalogPage>;
+  listProductsByCategory?: () => Promise<CatalogPage>;
   getProduct?: (id: number) => Promise<Product>;
   listCategories?: () => Promise<CatalogCategory[]>;
 } = {}) {
   return {
     searchProducts: overrides.searchProducts ?? (async () => ({
+      products: [product], total: 1, skip: 0, limit: 10,
+    })),
+    listProductsByCategory: overrides.listProductsByCategory ?? (async () => ({
       products: [product], total: 1, skip: 0, limit: 10,
     })),
     getProduct: overrides.getProduct ?? (async () => product),

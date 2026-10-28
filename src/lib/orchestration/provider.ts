@@ -3,6 +3,7 @@ import { AgentBoundaryError } from '../agent';
 import { toProviderAgentError } from '../agent/errors';
 import { createProviderModel, type ModelFactory } from '../agent/model';
 import { isProviderConfigured, type Environment } from '../config/environment';
+import { INTENT_EXTRACTION_SYSTEM_PROMPT } from '../ai/prompts';
 import { extractedTurnPlanSchema, providerExtractedTurnPlanSchema, type IntentExtractor } from './contracts';
 
 type IntentPlanGenerationOptions = {
@@ -26,14 +27,6 @@ export type ProviderIntentExtractorOptions = {
   generate?: IntentPlanGenerator;
   modelFactory?: ModelFactory;
 };
-
-const instructions = `Extract one or more shopping intents from the shopper turn.
-Return only the requested structured object.
-Never invent an intentId. Use null for new intents; when refining prior state, use only an exact ID supplied in previousIntents.
-Every new intent must include both a concise goal and a catalog search query.
-Use null for any unavailable optional intent or constraint value; include every field requested by the schema.
-Never include product records, product IDs, prices, or other catalog facts in the intent plan.
-Product data is fetched and validated separately by deterministic application code.`;
 
 async function defaultGenerate({ model, ...options }: IntentPlanGenerationOptions): Promise<unknown> {
   const result = await generateText({
@@ -69,7 +62,7 @@ export function createProviderIntentExtractor(options: ProviderIntentExtractorOp
     try {
       const generated = await generator({
         model,
-        instructions,
+        instructions: INTENT_EXTRACTION_SYSTEM_PROMPT,
         prompt: JSON.stringify({
           shopperPrompt: context.prompt,
           previousIntents: context.previousIntents,
@@ -90,9 +83,17 @@ export function createProviderIntentExtractor(options: ProviderIntentExtractorOp
       return {
         ...plan,
         intents: plan.intents.map((intent) => (
-          intent.intentId && !previousIds.has(intent.intentId)
-            ? { ...intent, intentId: undefined }
-            : intent
+          {
+            ...intent,
+            // Provider-generated tags are semantic hints, not trusted catalog
+            // taxonomy. Applying them as exact filters can erase an otherwise
+            // valid category result (for example "photography" -> "camera").
+            // Keep the wording in the query for ranking instead.
+            constraints: { ...intent.constraints, requiredTags: undefined },
+            ...(intent.intentId && !previousIds.has(intent.intentId)
+              ? { intentId: undefined }
+              : {}),
+          }
         )),
       };
     } catch (error) {

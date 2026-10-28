@@ -15,6 +15,7 @@ import { AgentBoundaryError, toCatalogAgentError } from './errors';
 
 export type AgentCatalogClient = {
   searchProducts(query: { query: string; limit?: number }): Promise<CatalogPage>;
+  listProductsByCategory(slug: string, query?: { limit?: number; skip?: number }): Promise<CatalogPage>;
   getProduct(id: number): Promise<Product>;
   listCategories(): Promise<CatalogCategory[]>;
 };
@@ -25,6 +26,32 @@ export function createCatalogToolHandlers(client: AgentCatalogClient) {
       try {
         const page = await client.searchProducts({ query, limit });
         return searchCatalogOutputSchema.parse({ products: page.products, total: page.total });
+      } catch (error) {
+        throw toCatalogAgentError(error);
+      }
+    },
+    async listCategoryProducts(category: string, pageSize = 100, maxProducts = 1_000, maxPages = 20) {
+      try {
+        const products = [];
+        const seen = new Set<number>();
+        let skip = 0;
+        let total = Number.POSITIVE_INFINITY;
+        let pages = 0;
+        while (skip < total && products.length < maxProducts && pages < maxPages) {
+          const limit = Math.min(pageSize, maxProducts - products.length);
+          const page = await client.listProductsByCategory(category, { limit, skip });
+          total = page.total;
+          for (const product of page.products) {
+            if (!seen.has(product.id)) {
+              seen.add(product.id);
+              products.push(product);
+            }
+          }
+          if (page.products.length === 0) break;
+          skip += page.products.length;
+          pages += 1;
+        }
+        return searchCatalogOutputSchema.parse({ products, total: Number.isFinite(total) ? total : products.length });
       } catch (error) {
         throw toCatalogAgentError(error);
       }

@@ -7,6 +7,11 @@ export const orchestrationRequestSchema = z.object({
   turnId: z.string().trim().min(1),
   previous: orchestrationResultSchema.optional(),
   retryIntentId: z.string().trim().min(1).optional(),
+  clarification: z.object({
+    intentId: z.string().trim().min(1),
+    field: z.enum(['maxPrice', 'minRating', 'category', 'inStock', 'brands', 'requiredTags', 'query']),
+    value: z.string().trim().min(1),
+  }).strict().optional(),
 }).strict();
 
 export const orchestrationResponseSchema = z.object({

@@ -9,6 +9,7 @@ export const intentConstraintsSchema = z.object({
   inStock: z.boolean().optional(),
   brands: z.array(z.string().trim().min(1)).min(1).optional(),
   requiredTags: z.array(z.string().trim().min(1)).min(1).optional(),
+  sort: z.literal('price_asc').optional(),
 }).strict();
 
 export const extractedIntentSchema = z.object({
@@ -31,6 +32,7 @@ const providerIntentConstraintsSchema = z.object({
   inStock: z.boolean().nullable(),
   brands: z.array(z.string().trim().min(1)).min(1).nullable(),
   requiredTags: z.array(z.string().trim().min(1)).min(1).nullable(),
+  sort: z.literal('price_asc').nullable(),
 }).strict().transform((constraints) => ({
   ...(constraints.maxPrice === null ? {} : { maxPrice: constraints.maxPrice }),
   ...(constraints.minRating === null ? {} : { minRating: constraints.minRating }),
@@ -38,6 +40,7 @@ const providerIntentConstraintsSchema = z.object({
   ...(constraints.inStock === null ? {} : { inStock: constraints.inStock }),
   ...(constraints.brands === null ? {} : { brands: constraints.brands }),
   ...(constraints.requiredTags === null ? {} : { requiredTags: constraints.requiredTags }),
+  ...(constraints.sort === null ? {} : { sort: constraints.sort }),
 }));
 
 const providerExtractedIntentSchema = z.object({
@@ -132,6 +135,12 @@ export type IntentExtractionContext = {
     constraints: Constraints;
     status: ShoppingIntent['status'];
   }>;
+};
+
+export type ClarificationAnswer = {
+  intentId: string;
+  field: Exclude<keyof Constraints, 'sort'> | 'query';
+  value: string;
 };
 
 export type IntentExtractor = (context: IntentExtractionContext) => Promise<unknown>;

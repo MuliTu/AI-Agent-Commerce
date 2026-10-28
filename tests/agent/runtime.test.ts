@@ -6,6 +6,7 @@ import type { Environment } from '../../src/lib/config/environment';
 
 const catalog = {
   searchProducts: vi.fn(),
+  listProductsByCategory: vi.fn(),
   getProduct: vi.fn(),
   listCategories: vi.fn(),
 } satisfies AgentCatalogClient;

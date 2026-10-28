@@ -26,6 +26,7 @@ export type Constraints = {
   inStock?: boolean;
   brands?: string[];
   requiredTags?: string[];
+  sort?: 'price_asc';
 };
 export type IntentStatus = 'ready' | 'needs_clarification' | 'completed' | 'failed';
 export type ShoppingIntent = { id: string; goal: string; query: string; constraints: Constraints; status: IntentStatus };

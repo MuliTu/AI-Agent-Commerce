@@ -4,12 +4,14 @@ import { parseEnvironment } from '../config/environment';
 import { createIntentOrchestrator } from './orchestrator';
 import { createProviderIntentExtractor } from './provider';
 import type { OrchestrationResult } from './contracts';
+import type { ClarificationAnswer } from './contracts';
 
 export async function runLiveOrchestration(input: {
   turnId: string;
   conversationId: string;
   prompt: string;
   previous?: OrchestrationResult;
+  clarification?: ClarificationAnswer;
 }): Promise<OrchestrationResult> {
   let environment;
   try {

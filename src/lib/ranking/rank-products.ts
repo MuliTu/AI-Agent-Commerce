@@ -8,6 +8,7 @@ const constraintSchema = z.object({
   inStock: z.boolean().optional(),
   brands: z.array(z.string().trim().min(1)).min(1).optional(),
   requiredTags: z.array(z.string().trim().min(1)).min(1).optional(),
+  sort: z.literal('price_asc').optional(),
 });
 
 const rankingRequestSchema = z.object({
@@ -153,6 +154,8 @@ export function rankCatalogProducts(products: unknown, request: RankingRequest):
         matchReasons: matchReasons(product, queryTokens, parsedRequest.constraints),
       };
     })
-    .sort((left, right) => right.score - left.score || left.product.id - right.product.id)
+    .sort((left, right) => parsedRequest.constraints.sort === 'price_asc'
+      ? left.product.price - right.product.price || right.score - left.score || left.product.id - right.product.id
+      : right.score - left.score || left.product.id - right.product.id)
     .slice(0, parsedRequest.limit);
 }

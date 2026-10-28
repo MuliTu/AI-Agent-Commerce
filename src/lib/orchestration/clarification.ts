@@ -3,7 +3,7 @@ import type { RankedProduct } from '../ranking';
 import type { IntentOutcome } from './contracts';
 
 export type Clarification = {
-  field: keyof Constraints | 'query';
+  field: Exclude<keyof Constraints, 'sort'> | 'query';
   question: string;
   options: string[];
   reason: 'requested' | 'empty' | 'broad' | 'split';
@@ -21,7 +21,7 @@ function categoryQuestion(products: readonly RankedProduct[], reason: Clarificat
     question: reason === 'empty'
       ? 'What kind of product should I focus on?'
       : 'Which product category should I focus on?',
-    options: categories.length > 1 ? categories : ['Laptops', 'Shoes', 'Beauty'],
+    options: categories.length > 1 ? categories : ['Laptops', 'Mens Shoes', 'Beauty'],
     reason,
   };
 }
@@ -73,9 +73,15 @@ export function evaluateClarification(
   products: readonly RankedProduct[],
 ): Clarification | undefined {
   if (intent.status === 'needs_clarification') {
+    if (products.length > 0 && supplied(intent.constraints, 'category')) return undefined;
     return nextMissingQuestion(intent, products, 'requested');
   }
-  if (products.length === 0) return nextMissingQuestion(intent, products, 'empty');
+  if (products.length === 0) {
+    if (!supplied(intent.constraints, 'category')) return categoryQuestion(products, 'empty');
+    return undefined;
+  }
+
+  if (supplied(intent.constraints, 'category')) return undefined;
 
   const [first, second, third] = products;
   const strongCluster = Boolean(
@@ -86,9 +92,8 @@ export function evaluateClarification(
   if (strongCluster) return undefined;
 
   const categories = new Set(products.map(({ product }) => product.category));
-  const brands = new Set(products.map(({ product }) => product.brand).filter(Boolean));
   const broad = products.length >= 5 && categories.size >= 3;
-  const split = products.length >= 4 && (categories.size >= 2 || brands.size >= 3);
+  const split = products.length >= 4 && categories.size >= 2;
   if (broad) return nextMissingQuestion(intent, products, 'broad');
   if (split) return nextMissingQuestion(intent, products, 'split');
   return undefined;

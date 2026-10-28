@@ -34,8 +34,13 @@ const catalog = {
   searchProducts: vi.fn(async (): Promise<CatalogPage> => ({
     products: [product], total: 1, skip: 0, limit: 20,
   })),
+  listProductsByCategory: vi.fn(async (): Promise<CatalogPage> => ({
+    products: [product], total: 1, skip: 0, limit: 20,
+  })),
   getProduct: vi.fn(),
-  listCategories: vi.fn(),
+  listCategories: vi.fn(async () => [{
+    slug: 'smartphones', name: 'Smartphones', url: 'https://dummyjson.com/products/category/smartphones',
+  }]),
 };
 
 const modelFactory = () => ({}) as LanguageModel;
@@ -90,7 +95,7 @@ describe('provider-backed intent extraction', () => {
       'intentId', 'goal', 'query', 'constraints', 'status',
     ]);
     expect(jsonSchema.properties?.intents?.items?.properties?.constraints?.required).toEqual([
-      'maxPrice', 'minRating', 'category', 'inStock', 'brands', 'requiredTags',
+      'maxPrice', 'minRating', 'category', 'inStock', 'brands', 'requiredTags', 'sort',
     ]);
 
     expect(providerExtractedTurnPlanSchema.parse({
@@ -105,6 +110,7 @@ describe('provider-backed intent extraction', () => {
           inStock: null,
           brands: null,
           requiredTags: null,
+          sort: null,
         },
         status: 'ready',
       }],
@@ -224,6 +230,30 @@ describe('provider-backed intent extraction', () => {
       intents: [
         { intentId: undefined, goal: 'Laptop', query: 'laptop' },
         { intentId: 'prior:intent:1', query: 'work laptop' },
+      ],
+    });
+  });
+
+  it('keeps provider tag guesses as ranking language instead of exact catalog filters', async () => {
+    const extractIntents = createProviderIntentExtractor({
+      environment,
+      modelFactory,
+      generate: async () => ({
+        intents: [
+          { goal: 'Photography phone', query: 'smartphone with strong camera quality', constraints: { category: 'smartphones', requiredTags: ['camera'] } },
+          { goal: 'Fragrance gift', query: 'fragrance gift', constraints: { category: 'fragrances', maxPrice: 80, requiredTags: ['gift'] } },
+        ],
+        response: '.json',
+      }),
+    });
+
+    await expect(extractIntents({
+      prompt: 'I need a phone for photography and a fragrance gift under $80',
+      previousIntents: [],
+    })).resolves.toMatchObject({
+      intents: [
+        { constraints: { category: 'smartphones' } },
+        { constraints: { category: 'fragrances', maxPrice: 80 } },
       ],
     });
   });

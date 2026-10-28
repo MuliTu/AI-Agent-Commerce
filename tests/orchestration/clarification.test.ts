@@ -42,25 +42,23 @@ describe('adaptive clarification policy', () => {
     expect(clarification?.options.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('does not ask for constraints the shopper already supplied', () => {
+  it('returns an honest empty result without entering a clarification loop for a known category', () => {
     const clarification = evaluateClarification(intent({ category: 'laptops', maxPrice: 1200 }), []);
-    expect(clarification).toMatchObject({ field: 'minRating', reason: 'empty' });
-    expect(clarification?.question).not.toMatch(/category|spend/i);
+    expect(clarification).toBeUndefined();
   });
 
-  it('offers query recovery rather than repeating every supplied constraint', () => {
+  it('does not repeat supplied constraints when a filtered category is empty', () => {
     const clarification = evaluateClarification(intent({
       category: 'laptops',
       maxPrice: 500,
       minRating: 4.8,
     }), []);
-    expect(clarification).toMatchObject({ field: 'query', reason: 'empty' });
-    expect(clarification?.question).toMatch(/broaden the product type/i);
-    expect(clarification?.question).not.toMatch(/laptops|500|4\.8/);
+    expect(clarification).toBeUndefined();
   });
 
-  it('turns an extractor clarification request into one structured question', () => {
-    const clarification = evaluateClarification(intent({ category: 'beauty' }, 'needs_clarification'), []);
-    expect(clarification).toMatchObject({ field: 'maxPrice', reason: 'requested' });
+  it('does not block useful category results because optional preferences are missing', () => {
+    const products = [ranked(1, 'beauty'), ranked(2, 'beauty')];
+    expect(evaluateClarification(intent({ category: 'beauty' }, 'needs_clarification'), products))
+      .toBeUndefined();
   });
 });

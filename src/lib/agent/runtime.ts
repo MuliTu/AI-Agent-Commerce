@@ -5,6 +5,7 @@ import { createCatalogTools } from './tools';
 import { AgentBoundaryError, toProviderAgentError } from './errors';
 import { agentPromptSchema, agentTextOutputSchema } from './contracts';
 import { createProviderModel, type ModelFactory } from './model';
+import { COMMERCE_AGENT_SYSTEM_PROMPT } from '../ai/prompts';
 
 export const COMMERCE_MODEL = 'gpt-5.4-mini' as const;
 export const MAX_TOOL_STEPS = 5;
@@ -59,7 +60,7 @@ export function createCommerceAgent(options: CommerceAgentOptions) {
           model,
           tools,
           stopWhen: stepCountIs(MAX_TOOL_STEPS),
-          instructions: 'Use only the supplied catalog tools for product facts and IDs. Never invent products.',
+          instructions: COMMERCE_AGENT_SYSTEM_PROMPT,
           prompt: promptResult.data,
         });
         const outputResult = agentTextOutputSchema.safeParse(result);
