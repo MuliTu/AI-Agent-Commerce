@@ -19,6 +19,7 @@ export const conversationStateSchema = z.object({
     title: z.string().optional(),
     createdAt: z.string().min(1),
     updatedAt: z.string().min(1),
+    archivedAt: z.string().optional(),
   }).strict(),
   turns: z.array(z.object({
     id: z.string().min(1),
@@ -40,6 +41,25 @@ export const conversationStateSchema = z.object({
   }).strict()),
 }).strict();
 
+export const conversationSummarySchema = z.object({
+  id: z.string().min(1),
+  title: z.string().optional(),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+  archivedAt: z.string().optional(),
+}).strict();
+
+export const conversationListSchema = z.object({
+  conversations: z.array(conversationSummarySchema),
+}).strict();
+
+export const conversationMutationSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('rename'), title: z.string().trim().min(1).max(80) }).strict(),
+  z.object({ action: z.literal('archive') }).strict(),
+  z.object({ action: z.literal('restore') }).strict(),
+]);
+
 export type ConversationState = z.infer<typeof conversationStateSchema>;
+export type ConversationSummary = z.infer<typeof conversationSummarySchema>;
 
 export type OrchestrationResponse = z.infer<typeof orchestrationResponseSchema>;

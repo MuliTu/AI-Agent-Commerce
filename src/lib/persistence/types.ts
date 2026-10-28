@@ -7,6 +7,7 @@ export type ConversationRecord = {
   title?: string;
   createdAt: string;
   updatedAt: string;
+  archivedAt?: string;
 };
 
 export type MessageRecord = {

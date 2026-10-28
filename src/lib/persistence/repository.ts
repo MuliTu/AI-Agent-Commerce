@@ -107,6 +107,7 @@ function conversationFromRow(row: SqlRow): ConversationRecord {
     ...(row.title === null ? {} : { title: String(row.title) }),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
+    ...(row.archived_at === null || row.archived_at === undefined ? {} : { archivedAt: String(row.archived_at) }),
   };
 }
 
@@ -222,9 +223,40 @@ export class CommerceRepository implements Disposable {
     return row ? conversationFromRow(row) : undefined;
   }
 
-  listConversations(): ConversationRecord[] {
-    return (this.database.prepare('SELECT * FROM conversations ORDER BY updated_at DESC, id').all() as SqlRow[])
+  listConversations(options: { includeArchived?: boolean } = {}): ConversationRecord[] {
+    const statement = options.includeArchived
+      ? 'SELECT * FROM conversations ORDER BY updated_at DESC, id'
+      : 'SELECT * FROM conversations WHERE archived_at IS NULL ORDER BY updated_at DESC, id';
+    return (this.database.prepare(statement).all() as SqlRow[])
       .map(conversationFromRow);
+  }
+
+  renameConversation(id: string, title: string, updatedAt: string): ConversationRecord {
+    const normalized = required(title, 'conversation.title').trim().slice(0, 80);
+    const result = this.database.prepare(`
+      UPDATE conversations SET title = ?, updated_at = ?
+      WHERE id = ? AND archived_at IS NULL
+    `).run(normalized, updatedAt, id);
+    if (result.changes !== 1) throw new PersistenceConflictError(`Conversation ${id} cannot be renamed.`);
+    return this.getConversation(id)!;
+  }
+
+  archiveConversation(id: string, archivedAt: string): ConversationRecord {
+    const result = this.database.prepare(`
+      UPDATE conversations SET archived_at = ?, updated_at = ?
+      WHERE id = ? AND archived_at IS NULL
+    `).run(archivedAt, archivedAt, id);
+    if (result.changes !== 1) throw new PersistenceConflictError(`Conversation ${id} cannot be archived.`);
+    return this.getConversation(id)!;
+  }
+
+  restoreConversation(id: string, restoredAt: string): ConversationRecord {
+    const result = this.database.prepare(`
+      UPDATE conversations SET archived_at = NULL, updated_at = ?
+      WHERE id = ? AND archived_at IS NOT NULL
+    `).run(restoredAt, id);
+    if (result.changes !== 1) throw new PersistenceConflictError(`Conversation ${id} cannot be restored.`);
+    return this.getConversation(id)!;
   }
 
   acceptTurn(input: AcceptTurnInput): TurnRecord {

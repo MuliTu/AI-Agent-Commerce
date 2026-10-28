@@ -2,6 +2,15 @@
 
 All notable product changes are recorded here.
 
+## 0.3.0-local.1 — 2026-10-28 (unreleased local candidate)
+
+- Added SQLite-backed conversation history, stable URL recovery, and persisted turn lifecycle.
+- Added saved-conversation navigation with rename and reversible removal.
+- Added explicit real-provider configuration for OpenAI and local LiteLLM testing; runtime demo fallback remains removed.
+- Refined the responsive commerce UI, clarification routing, retry states, and development-only request activity.
+
+This local prerelease has not been tagged, published, or deployed.
+
 ## [0.2.0] - 2026-10-27
 
 ### Added

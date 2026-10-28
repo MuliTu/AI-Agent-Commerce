@@ -84,6 +84,22 @@ export class ConversationExecutionService {
     };
   }
 
+  listConversations() {
+    return this.repository.listConversations();
+  }
+
+  renameConversation(conversationId: string, title: string) {
+    return this.repository.renameConversation(conversationId, title, this.now());
+  }
+
+  archiveConversation(conversationId: string) {
+    return this.repository.archiveConversation(conversationId, this.now());
+  }
+
+  restoreConversation(conversationId: string) {
+    return this.repository.restoreConversation(conversationId, this.now());
+  }
+
   execute(input: ExecuteInput): Promise<OrchestrationResult> {
     const fingerprint = acceptanceFingerprint(input);
     const existingExecution = this.inFlight.get(input.turnId);

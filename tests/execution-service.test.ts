@@ -6,6 +6,7 @@ import { ConversationExecutionService } from '../src/lib/execution';
 import { CommerceRepository, PersistenceConflictError } from '../src/lib/persistence';
 import type { OrchestrationResult } from '../src/lib/orchestration';
 import { createGetHandler, createPostHandler } from '../src/app/api/orchestrate/route';
+import { createConversationsGetHandler, createConversationsPatchHandler } from '../src/app/api/conversations/route';
 import { AgentBoundaryError } from '../src/lib/agent';
 
 const result: OrchestrationResult = {
@@ -164,5 +165,32 @@ describe('orchestration route contracts', () => {
     const response = await handler(new Request('http://local/api/orchestrate?conversationId=conversation-1'));
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual(state);
+  });
+});
+
+describe('conversation management route contracts', () => {
+  it('lists active conversations and validates reversible mutations', async () => {
+    const conversation = { id: 'conversation-1', title: 'Laptop search', createdAt: 'now', updatedAt: 'now' };
+    const service = {
+      listConversations: vi.fn(() => [conversation]),
+      renameConversation: vi.fn(() => ({ ...conversation, title: 'Work laptops' })),
+      archiveConversation: vi.fn(() => ({ ...conversation, archivedAt: 'later' })),
+      restoreConversation: vi.fn(() => conversation),
+    };
+    const list = await createConversationsGetHandler(service)();
+    expect(list.status).toBe(200);
+    await expect(list.json()).resolves.toEqual({ conversations: [conversation] });
+
+    const patch = createConversationsPatchHandler(service);
+    const renamed = await patch(new Request('http://local/api/conversations?conversationId=conversation-1', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'rename', title: 'Work laptops' }),
+    }));
+    expect(renamed.status).toBe(200);
+    expect(service.renameConversation).toHaveBeenCalledWith('conversation-1', 'Work laptops');
+
+    const invalid = await patch(new Request('http://local/api/conversations?conversationId=conversation-1', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'rename', title: ' ' }),
+    }));
+    expect(invalid.status).toBe(400);
   });
 });

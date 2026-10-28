@@ -1,7 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { productSchema } from '../../src/lib/domain/contracts';
-import { ClarificationPrompt, ConversationMessage, IntentSection, ProductGrid, RecommendationState, ToolStatus } from '../../src/app/components';
+import packageJson from '../../package.json';
+import { ClarificationPrompt, ConversationMessage, IntentSection, ProductCard, ProductGrid, ProductGridSkeleton, RecommendationState, ToolStatus } from '../../src/app/components';
+import { CommerceExperience } from '../../src/app/components/CommerceExperience';
+import { APP_VERSION } from '../../src/lib/version';
 
 const product = productSchema.parse({ id:7, title:'Trail Runner', description:'A catalog shoe', category:'footwear', price:120, rating:4.8, stock:4, tags:['trail'], brand:'Northstar', thumbnail:'https://example.com/trail.webp', availabilityStatus:'In Stock' });
 
@@ -9,6 +12,28 @@ describe('app-owned product UI', () => {
   it('renders trusted product facts and grounded match reasons as text', () => {
     const html = renderToStaticMarkup(<ProductGrid products={[product]} getMatchReasons={() => ['Matches trail tag']} />);
     expect(html).toContain('Trail Runner'); expect(html).toContain('$120.00'); expect(html).toContain('4.8 / 5'); expect(html).toContain('In Stock'); expect(html).toContain('Matches trail tag'); expect(html).toContain('role="list"');
+  });
+  it('provides an accessible stable fallback when a catalog image is absent', () => {
+    const html = renderToStaticMarkup(<ProductCard product={{ ...product, thumbnail: undefined }} matchReasons={[]} />);
+    expect(html).toContain('role="img"');
+    expect(html).toContain('Image unavailable for Trail Runner');
+  });
+  it('renders an accessible non-product skeleton while catalog results are pending', () => {
+    const html = renderToStaticMarkup(<ProductGridSkeleton />);
+    expect(html).toContain('aria-label="Catalog results pending"');
+    expect(html).toContain('No products are available yet.');
+    expect(html).not.toContain('Product recommendations');
+  });
+  it('renders one static welcome without creating a runtime request and exposes the package version', () => {
+    const html = renderToStaticMarkup(<CommerceExperience providerEnabled={false} providerLabel="Not configured" />);
+    expect(html.match(/Hi! I’m your shopping assistant/g)).toHaveLength(1);
+    expect(html).not.toContain('Ready when you are');
+    expect(html).toContain(`v${APP_VERSION}`);
+    expect(APP_VERSION).toBe(packageJson.version);
+    expect(html).not.toContain('Request activity');
+    expect(html).not.toContain('&gt;Requests&lt;');
+    expect(html).toContain('href="#recommendations"');
+    expect(html).toContain('id="recommendations"');
   });
   it('escapes model-like text instead of executing authored markup', () => {
     const html = renderToStaticMarkup(<ConversationMessage role="assistant">{'<script>unsafe()</script>'}</ConversationMessage>);

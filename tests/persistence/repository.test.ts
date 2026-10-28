@@ -135,7 +135,7 @@ describe('CommerceRepository', () => {
     repository = new CommerceRepository(databasePath);
 
     expect(repository.database.prepare('SELECT version FROM schema_migrations ORDER BY version').all())
-      .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
+      .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }]);
   });
 
   it('round-trips conversations, messages, turns, intents, tools, and snapshots in stable order', () => {
@@ -177,6 +177,22 @@ describe('CommerceRepository', () => {
     } finally {
       reader.close();
     }
+  });
+
+  it('renames and reversibly archives conversations without deleting their history', () => {
+    seedTurn();
+    expect(repository.renameConversation(conversation.id, 'Renamed search', '2026-10-28T10:04:00.000Z'))
+      .toMatchObject({ id: conversation.id, title: 'Renamed search' });
+
+    expect(repository.archiveConversation(conversation.id, '2026-10-28T10:05:00.000Z'))
+      .toMatchObject({ id: conversation.id, archivedAt: '2026-10-28T10:05:00.000Z' });
+    expect(repository.listConversations()).toEqual([]);
+    expect(repository.listConversations({ includeArchived: true })).toHaveLength(1);
+    expect(repository.listMessages(conversation.id)).toHaveLength(1);
+
+    expect(repository.restoreConversation(conversation.id, '2026-10-28T10:06:00.000Z'))
+      .toMatchObject({ id: conversation.id, title: 'Renamed search' });
+    expect(repository.listConversations()).toHaveLength(1);
   });
 
   it('treats exact create and completion replays as idempotent', () => {

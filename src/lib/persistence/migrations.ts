@@ -95,6 +95,14 @@ export const migrations: readonly Migration[] = [
       ALTER TABLE turns ADD COLUMN failure_retryable INTEGER NOT NULL DEFAULT 0 CHECK (failure_retryable IN (0, 1));
     `,
   },
+  {
+    version: 4,
+    sql: `
+      ALTER TABLE conversations ADD COLUMN archived_at TEXT;
+      CREATE INDEX idx_conversations_active_updated
+      ON conversations(archived_at, updated_at DESC, id);
+    `,
+  },
 ] as const;
 
 export function applyMigrations(database: DatabaseSync): void {
