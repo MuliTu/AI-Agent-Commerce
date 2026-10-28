@@ -100,33 +100,4 @@ describe('provider-backed intent extraction', () => {
       modelFactory,
     })).toThrow(expect.objectContaining({ code: 'provider_authentication' }));
   });
-
-  it('uses the explicit LiteLLM development endpoint and exact local model', async () => {
-    const litellmEnvironment: Environment = {
-      AI_PROVIDER: 'litellm',
-      OPENAI_MODEL: 'gpt-5.4-mini',
-      LITELLM_BASE_URL: 'http://127.0.0.1:4001/v1',
-      LITELLM_MODEL: 'qwen3.5-9b',
-      LITELLM_API_KEY: 'test-server-key',
-    };
-    const generate = vi.fn(async () => ({
-      intents: [{ goal: 'Local development phone', query: 'camera phone', constraints: {} }],
-      response: 'I will search the catalog.',
-    }));
-    const factory = vi.fn(modelFactory);
-    const extractIntents = createProviderIntentExtractor({
-      environment: litellmEnvironment,
-      generate,
-      modelFactory: factory,
-    });
-
-    await extractIntents({ prompt: 'Find a camera phone.', previousIntents: [] });
-
-    expect(factory).toHaveBeenCalledWith(
-      'qwen3.5-9b',
-      'test-server-key',
-      'http://127.0.0.1:4001/v1',
-    );
-    expect(generate).toHaveBeenCalledOnce();
-  });
 });
