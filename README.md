@@ -6,17 +6,21 @@ Conversational product discovery using a Single Agent, grounded in the DummyJSON
 
 The prototype includes the Next.js App Router foundation, TypeScript domain contracts, runtime product validation, a typed DummyJSON client, stable offline catalog fixtures, a process-local expiring snapshot cache, schema-validated Vercel AI SDK catalog tools, semantic ranking, multi-intent orchestration, adaptive clarification, product cards, scoped partial failures, and explicit per-intent retry.
 
-The shopper UI has no runtime demo or mock mode. Every shopping turn uses the explicitly configured server-side model provider and the DummyJSON catalog, or returns a clear configuration/provider error. Deterministic model and catalog fixtures exist only in automated tests. Server-side conversation persistence and reconnect recovery are not implemented.
+The shopper UI has no runtime demo or mock mode. Every shopping turn uses the explicitly configured server-side model provider and the DummyJSON catalog, or returns a clear configuration/provider error. Deterministic model and catalog fixtures exist only in automated tests. The server-side persistence foundation is implemented; route wiring and reconnect recovery remain separate work.
+
+The persistence foundation uses the Node.js `node:sqlite` module with versioned migrations and repositories for conversations, messages, turns, intents, tool runs, and schema-validated product snapshots. Writes use ownership-preserving foreign keys and transactions, and stable IDs/idempotency keys make semantic retries replay-safe. This ticket does not yet connect the repositories to API routes or the browser recovery flow.
 
 ## Local setup
 
-Use Node.js 22.12 or newer and npm. Run `npm ci`, then `npm run dev`. Open http://localhost:3000.
+Use Node.js 22.13 or newer and npm. Node 22.13 is the first Node 22 release where `node:sqlite` no longer requires the `--experimental-sqlite` flag. Run `npm ci`, then `npm run dev`. Open http://localhost:3000.
 
 The default `LLM_PROVIDER=disabled` mode needs no credentials and fails closed. To enable the hosted boundary, set `LLM_PROVIDER=openai`, a nonempty server-side `LLM_API_KEY`, `LLM_MODEL=gpt-5.4-mini`, and `LLM_BASE_URL=https://api.openai.com/v1`. The application rejects model or endpoint substitution instead of falling back to a different provider. Never put credentials in `NEXT_PUBLIC_*` variables or commit environment files.
 
 On the local-only `local/litellm-testing` branch, `LLM_PROVIDER=litellm` uses the OpenAI-compatible endpoint `LLM_BASE_URL=http://127.0.0.1:4001/v1` with `LLM_MODEL=qwen3.5-9b`. Put its credential only in the ignored `LLM_API_KEY` field. The provider choice determines the protocol (OpenAI Responses or LiteLLM Chat Completions), and credentials are never forwarded to another endpoint.
 
 GPT-5.4-mini access is an environment assumption and has not been verified by the offline suite. `src/lib/agent/` configures three schema-validated, catalog-grounded tools (`searchCatalog`, `getProduct`, and `listCategories`) and stops an AI SDK tool loop after five completed steps. Catalog/provider failures are translated to typed errors; unknown product IDs are rejected before product data can be returned. The live route and shopper UI are connected, but the repository contains no credentials and automated tests make no live model calls.
+
+SQLite is intentionally a single-node choice for this assignment. A local database file is not durable on an ephemeral/serverless filesystem, does not provide distributed coordination, and does not keep in-flight work alive through a server shutdown. A managed durable database plus a queue/worker lease model is the production alternative when those guarantees are required. Only validated application state belongs in SQLite; provider credentials and credential-shaped tool payloads are rejected.
 
 ## Verification
 
@@ -31,7 +35,7 @@ Playwright intercepts the provider route at the browser-test boundary and suppli
 
 Canonical specification, plan, decisions, and test plan are in `outputs/`. Delivery target: November 1, 2026 at 23:59 Asia/Jerusalem.
 
-The current application stores no conversations. SQLite/reconnect scope is still awaiting an explicit requirement decision. If implemented, it would not imply that execution survives server shutdown; deployment durability would still depend on storage.
+The current application routes do not yet write conversations, although the SQLite migrations and repositories are available for that integration. Reconnect behavior remains separate work. Persistence does not imply that execution survives server shutdown; deployment durability still depends on the target storage.
 
 Cart, checkout, authentication, deployment, and production job infrastructure are outside the current implementation scope.
 
