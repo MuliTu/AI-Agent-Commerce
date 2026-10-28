@@ -1,8 +1,8 @@
 import type { Product } from '@/lib/domain/contracts';
 import { ProductCard } from './ProductCard';
-type Props = { products: Product[]; getMatchReasons: (product: Product) => string[] };
-export function ProductGrid({ products, getMatchReasons }: Props) {
-  return <div className="product-grid" role="list" aria-label="Product recommendations">{products.map((product) => <div key={product.id} role="listitem"><ProductCard product={product} matchReasons={getMatchReasons(product)} /></div>)}</div>;
+type Props = { products: Product[]; getMatchReasons: (product: Product) => string[]; locale?: 'en' | 'he' };
+export function ProductGrid({ products, getMatchReasons, locale = 'en' }: Props) {
+  return <div className="product-grid" role="list" aria-label={locale === 'he' ? 'המלצות למוצרים' : 'Product recommendations'}>{products.map((product) => <div key={product.id} role="listitem"><ProductCard product={product} matchReasons={getMatchReasons(product)} locale={locale} /></div>)}</div>;
 }
 
 export function ProductGridSkeleton() {

@@ -1,10 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { productSchema } from '../../src/lib/domain/contracts';
-import packageJson from '../../package.json';
 import { ClarificationPrompt, ConversationMessage, IntentSection, ProductCard, ProductGrid, ProductGridSkeleton, RecommendationState, ToolStatus } from '../../src/app/components';
 import { CommerceExperience } from '../../src/app/components/CommerceExperience';
-import { APP_VERSION } from '../../src/lib/version';
 
 const product = productSchema.parse({ id:7, title:'Trail Runner', description:'A catalog shoe', category:'footwear', price:120, rating:4.8, stock:4, tags:['trail'], brand:'Northstar', thumbnail:'https://example.com/trail.webp', availabilityStatus:'In Stock' });
 
@@ -24,12 +22,14 @@ describe('app-owned product UI', () => {
     expect(html).toContain('No products are available yet.');
     expect(html).not.toContain('Product recommendations');
   });
-  it('renders one static welcome without creating a runtime request and exposes the package version', () => {
-    const html = renderToStaticMarkup(<CommerceExperience providerEnabled={false} providerLabel="Not configured" />);
-    expect(html.match(/Hi! I’m your shopping assistant/g)).toHaveLength(1);
-    expect(html).not.toContain('Ready when you are');
-    expect(html).toContain(`v${APP_VERSION}`);
-    expect(APP_VERSION).toBe(packageJson.version);
+  it('renders the centered Bazak welcome and composer without local-workspace chrome', () => {
+    const html = renderToStaticMarkup(<CommerceExperience providerEnabled={false} />);
+    expect(html.match(/Find products through conversation/g)).toHaveLength(1);
+    expect(html).toContain('BAZAK COMMERCE');
+    expect(html).toContain('Try smartphones, laptops, fragrances, beauty, luggage, or kitchen accessories.');
+    expect(html).toContain('composer-wrap--welcome');
+    expect(html).not.toContain('Local workspace');
+    expect(html).not.toContain('class="profile"');
     expect(html).not.toContain('Request activity');
     expect(html).not.toContain('&gt;Requests&lt;');
     expect(html).toContain('href="#recommendations"');
@@ -53,7 +53,7 @@ describe('app-owned product UI', () => {
     expect(html.match(/type="radio"/g)).toHaveLength(2); expect(html).toContain('<fieldset'); expect(html).toContain('Clarification choices');
   });
   it('labels each intent and exposes completion state', () => {
-    const html = renderToStaticMarkup(<IntentSection title="Work laptop" summary="One result" status="completed"><p>Content</p></IntentSection>);
-    expect(html).toContain('aria-labelledby="intent-work-laptop"'); expect(html).toContain('Results ready');
+    const html = renderToStaticMarkup(<IntentSection title="Work laptop" summary="One result" status="completed" grouped={false}><p>Content</p></IntentSection>);
+    expect(html).toContain('aria-labelledby="intent-work-laptop"'); expect(html).toContain('Options for this goal');
   });
 });

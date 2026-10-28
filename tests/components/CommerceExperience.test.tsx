@@ -7,14 +7,16 @@ describe('CommerceExperience runtime surfaces', () => {
     const markup = renderToStaticMarkup(
       <CommerceExperience
         providerEnabled={false}
-        providerLabel="Model configuration required"
       />,
     );
 
     expect(markup).not.toContain('>Demo<');
     expect(markup).not.toContain('Request activity');
     expect(markup).not.toContain('aria-label="Execution mode"');
-    expect(markup).toContain('Model configuration required');
+    expect(markup).toContain('I’m not ready to search yet');
+    expect(markup).toContain('Example searches');
+    expect(markup).toContain('Find a smartphone');
+    expect(markup).not.toContain('How results and recovery work');
   });
 
 });
