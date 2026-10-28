@@ -42,8 +42,15 @@ describe('safe provider diagnostics', () => {
     const inner = Object.assign(new Error('private'), { code: 'SQLITE_CONSTRAINT' });
     expect(createSafeDiagnostic(new Error('wrapper', { cause: inner }), 'persistence'))
       .toEqual({ stage: 'persistence', class: 'sqlite_error', code: 'SQLITE_CONSTRAINT' });
-    expect(createSafeDiagnostic(new Error('private arbitrary failure'), 'execution'))
-      .toEqual({ stage: 'execution', class: 'unknown' });
+    const unknown = new Error('private arbitrary failure');
+    unknown.stack = 'Error: private arbitrary failure\n    at run (/private/work/src/lib/execution/service.ts:178:15)';
+    expect(createSafeDiagnostic(unknown, 'execution'))
+      .toEqual({
+        stage: 'execution',
+        class: 'unknown',
+        name: 'Error',
+        source: 'src/lib/execution/service.ts:178',
+      });
   });
 
   it('normalizes supplied diagnostics through the same strict allowlist', () => {
@@ -60,5 +67,24 @@ describe('safe provider diagnostics', () => {
       code: 'private_code', param: 'private.parameter',
     })).toEqual({ stage: 'provider_request', class: 'api_call_error' });
     expect(normalizeSafeDiagnostic({ stage: 'private_stage', class: 'unknown' })).toBeUndefined();
+    expect(normalizeSafeDiagnostic({
+      stage: 'execution',
+      class: 'unknown',
+      name: 'TypeError',
+      source: 'src/lib/orchestration/orchestrator.ts:149',
+      stack: 'private stack',
+      message: 'private message',
+    })).toEqual({
+      stage: 'execution',
+      class: 'unknown',
+      name: 'TypeError',
+      source: 'src/lib/orchestration/orchestrator.ts:149',
+    });
+    expect(normalizeSafeDiagnostic({
+      stage: 'execution',
+      class: 'unknown',
+      name: 'PrivateError',
+      source: '../../private.ts:1',
+    })).toEqual({ stage: 'execution', class: 'unknown' });
   });
 });

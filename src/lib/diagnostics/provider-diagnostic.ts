@@ -18,6 +18,8 @@ export type SafeDiagnostic = {
   status?: number;
   code?: string;
   param?: string;
+  name?: string;
+  source?: string;
 };
 
 const providerTokens = new Set([
@@ -28,6 +30,11 @@ const providerParams = new Set(['text.format.schema', 'response_format', 'model'
 const sqliteCodes = new Set([
   'SQLITE_BUSY', 'SQLITE_CONSTRAINT', 'SQLITE_READONLY', 'SQLITE_CANTOPEN',
   'SQLITE_IOERR', 'SQLITE_CORRUPT', 'SQLITE_MISMATCH',
+]);
+const errorNames = new Set([
+  'Error', 'TypeError', 'RangeError', 'ZodError', 'AgentBoundaryError',
+  'OrchestrationError', 'PersistedExecutionError', 'PersistenceConflictError',
+  'CatalogError', 'NoObjectGeneratedError', 'APICallError',
 ]);
 const diagnosticStages = new Set<DiagnosticStage>([
   'request_validation', 'provider_request', 'provider_output_validation', 'catalog_fetch',
@@ -50,6 +57,32 @@ function safeProviderToken(value: unknown): string | undefined {
 function safeProviderParam(value: unknown): string | undefined {
   if (typeof value !== 'string' || value.length > 64) return undefined;
   return providerParams.has(value) ? value : undefined;
+}
+
+function safeErrorName(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object' || !('name' in error)) return undefined;
+  const name = (error as { name?: unknown }).name;
+  return typeof name === 'string' && errorNames.has(name) ? name : undefined;
+}
+
+function safeErrorSource(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object' || !('stack' in error)) return undefined;
+  const stack = (error as { stack?: unknown }).stack;
+  if (typeof stack !== 'string') return undefined;
+  const match = stack.match(/[\\/](src[\\/][A-Za-z0-9._/\\-]+\.(?:ts|tsx)):(\d+):\d+/);
+  if (!match) return undefined;
+  const source = match[1].replaceAll('\\', '/');
+  if (source.includes('..')) return undefined;
+  return `${source}:${match[2]}`;
+}
+
+function safeIdentity(error: unknown): Pick<SafeDiagnostic, 'name' | 'source'> {
+  const name = safeErrorName(error);
+  const source = safeErrorSource(error);
+  return {
+    ...(name === undefined ? {} : { name }),
+    ...(source === undefined ? {} : { source }),
+  };
 }
 
 function providerErrorFields(error: unknown): Pick<SafeDiagnostic, 'code' | 'param'> {
@@ -103,12 +136,20 @@ export function createSafeDiagnostic(error: unknown, fallbackStage: DiagnosticSt
     if (diagnostic) return diagnostic;
     current = 'cause' in current ? (current as { cause?: unknown }).cause : undefined;
   }
-  return { stage: fallbackStage, class: 'unknown' };
+  return { stage: fallbackStage, class: 'unknown', ...safeIdentity(error) };
 }
 
 export function normalizeSafeDiagnostic(value: unknown): SafeDiagnostic | undefined {
   if (!value || typeof value !== 'object') return undefined;
-  const candidate = value as { stage?: unknown; class?: unknown; status?: unknown; code?: unknown; param?: unknown };
+  const candidate = value as {
+    stage?: unknown;
+    class?: unknown;
+    status?: unknown;
+    code?: unknown;
+    param?: unknown;
+    name?: unknown;
+    source?: unknown;
+  };
   if (typeof candidate.stage !== 'string' || !diagnosticStages.has(candidate.stage as DiagnosticStage)) return undefined;
   if (typeof candidate.class !== 'string' || !diagnosticClasses.has(candidate.class as SafeDiagnostic['class'])) return undefined;
 
@@ -128,6 +169,11 @@ export function normalizeSafeDiagnostic(value: unknown): SafeDiagnostic | undefi
     if (status !== undefined) normalized.status = status;
   } else if (diagnosticClass === 'sqlite_error' && typeof candidate.code === 'string' && sqliteCodes.has(candidate.code)) {
     normalized.code = candidate.code;
+  } else if (diagnosticClass === 'unknown') {
+    if (typeof candidate.name === 'string' && errorNames.has(candidate.name)) normalized.name = candidate.name;
+    if (typeof candidate.source === 'string' && /^src\/[A-Za-z0-9._/-]+\.(?:ts|tsx):\d+$/.test(candidate.source) && !candidate.source.includes('..')) {
+      normalized.source = candidate.source;
+    }
   }
 
   return normalized;
