@@ -1,6 +1,6 @@
 {
   "name": "bazak-ai-agent-commerce",
-  "version": "0.3.0-local.1",
+  "version": "0.3.0-local.3",
   "private": true,
   "scripts": {
     "dev": "next dev",

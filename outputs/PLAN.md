@@ -155,3 +155,12 @@ Any omitted or simplified item must be described plainly in the README.
 - README commands work from a clean checkout.
 - No text claims that execution survives server shutdown.
 - Submission is delivered before the stated deadline.
+
+## MYW-34 implementation slice
+
+1. Harden category resolution with Hebrew aliases and remove unrelated fallback behavior for unknown catalog categories.
+2. Localize deterministic orchestration feedback and require provider-facing response copy to follow the shopper language.
+3. Render unsupported and unknown catalog goals as compact prose while preserving supported sibling outcomes.
+4. Replace the empty chat message with the centered Bazak welcome/composer lifecycle; remove local-workspace profile chrome and strengthen Bazak identity.
+5. Standardize grid/card geometry across categories, including LTR catalog content inside RTL turns and bottom-pinned match reasoning.
+6. Verify exact Hebrew and English journeys, invalid choices, restore behavior, accessibility, reduced motion, desktop/mobile layout, static checks, unit/integration tests, build, and Playwright.

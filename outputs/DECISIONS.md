@@ -16,6 +16,8 @@ This log records current decisions and proposals. “Accepted” means accepted 
 | D-08 | Five total attempts for transient failures | Accepted design |
 | D-09 | Vitest, MSW, Playwright, Ollama, then OpenAI | Accepted design |
 | D-10 | Staged delivery with README reflection | Accepted plan |
+| D-11 | Conversation-owned result groups and independent scroll regions | Accepted design |
+| D-12 | Central, one-file-per-system-prompt organization | Accepted design |
 
 ## D-01 — Use Next.js with TypeScript
 
@@ -122,6 +124,26 @@ This log records current decisions and proposals. “Accepted” means accepted 
 **Why:** It protects core quality and distinguishes required work from thoughtful extension.
 
 **Trade-offs:** Some polish may be deferred. Deferred work must be explicit rather than implied to exist.
+
+## D-11 — Keep results inside the conversation turn that produced them
+
+**Context:** Detached result panels and a shared “latest results” area make old products look current after the shopper changes topics. A growing page also causes the composer and saved-conversation history to compete with document scrolling.
+
+**Decision:** Render each structured result group inside its originating Bazak message. A new, unrelated intent starts a new result scope; explicit refinements may retain the referenced intent and its successful siblings. The chat transcript and saved-conversation list scroll independently, while the composer remains anchored at the bottom of the workspace. Shopper messages align right and Bazak messages align left.
+
+**Why:** Conversation ownership makes context visible, prevents stale results from masquerading as the latest answer, and matches familiar chat interaction. Independent scroll regions keep navigation and input available without duplicating content.
+
+**Trade-offs:** Long historical turns remain in the transcript and may still be expensive to render. The implementation therefore needs stable persisted turns and focused browser coverage for long conversations, topic changes, and mobile layouts.
+
+## D-12 — Store actual LLM system prompts in one central directory
+
+**Context:** Inline prompt strings are difficult to discover, review, and test, and can be confused with deterministic UI copy.
+
+**Decision:** Store actual application LLM system prompts in `src/lib/ai/prompts`, with one clearly named file per prompt and a single barrel export. Call sites import prompt constants. UI messages, validation errors, workflow instructions, and environment configuration remain outside this directory because they are not model system prompts.
+
+**Why:** Centralization makes prompt ownership explicit, prevents accidental duplication, and enables focused tests without coupling the UI to model instructions.
+
+**Trade-offs:** Dynamic shopper data and previous intents are still composed at the call site, where their typed runtime context belongs.
 
 ## Decisions still requiring evidence or confirmation
 

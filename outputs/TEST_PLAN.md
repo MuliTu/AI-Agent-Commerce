@@ -186,3 +186,12 @@ Before submission:
 - At least the defined target-provider smoke set has been reviewed, or its absence is documented.
 - No test or README statement claims execution survives server shutdown.
 - Known flaky or incomplete tests are disclosed rather than hidden.
+
+## 11. MYW-34 regression matrix
+
+- Exact Hebrew journey: smartphone; flight plus suitcase; relevant luggage clarification/result; new plates turn. Assert RTL assistant chrome, Hebrew deterministic feedback, no stale goals, and no unrelated laptop or Beauty mapping.
+- English parity: repeat equivalent single- and multi-intent journeys and preserve LTR catalog records.
+- Unknown and unsupported goals: render concise prose without an oversized result card; keep supported siblings visible.
+- Empty lifecycle: fresh load shows centered welcome and composer; first accepted send removes it and moves the composer to sticky bottom; restored conversation never flashes or duplicates it.
+- Layout: representative products from every available category share desktop and 390×844 column policy, stable image frames, stretch/content flow, bottom-aligned match block, no clipping, and no horizontal overflow.
+- Accessibility: visible focus, keyboard send/newline behavior, native clarification controls, screen-reader names, RTL/LTR direction, broken-image fallback, and `prefers-reduced-motion`.
