@@ -16,7 +16,7 @@ export type IntentPlanGenerator = (options: IntentPlanGenerationOptions) => Prom
 export type ProviderIntentExtractorOptions = {
   environment: Environment;
   generate?: IntentPlanGenerator;
-  modelFactory?: (modelId: string, apiKey: string, baseURL?: string) => LanguageModel;
+  modelFactory?: (modelId: typeof COMMERCE_MODEL, apiKey: string) => LanguageModel;
 };
 
 const instructions = `Extract one or more shopping intents from the shopper turn.
@@ -38,27 +38,18 @@ async function defaultGenerate({ model, ...options }: IntentPlanGenerationOption
 }
 
 export function createProviderIntentExtractor(options: ProviderIntentExtractorOptions): IntentExtractor {
-  if (options.environment.AI_PROVIDER === 'disabled') {
+  if (options.environment.AI_PROVIDER !== 'openai' || !options.environment.OPENAI_API_KEY) {
     throw new AgentBoundaryError(
       'provider_authentication',
-      'A model provider must be explicitly enabled with a server-side credential.',
+      'OpenAI must be explicitly enabled with a server-side credential.',
       false,
     );
   }
-  const providerConfig = options.environment.AI_PROVIDER === 'openai'
-    ? { modelId: options.environment.OPENAI_MODEL, apiKey: options.environment.OPENAI_API_KEY, baseURL: undefined }
-    : { modelId: options.environment.LITELLM_MODEL, apiKey: options.environment.LITELLM_API_KEY, baseURL: options.environment.LITELLM_BASE_URL };
-  if (!providerConfig.apiKey || !providerConfig.modelId || (options.environment.AI_PROVIDER === 'litellm' && !providerConfig.baseURL)) {
-    throw new AgentBoundaryError('provider_authentication', 'The selected provider credential is unavailable.', false);
+  if (options.environment.OPENAI_MODEL !== COMMERCE_MODEL) {
+    throw new AgentBoundaryError('provider_authentication', 'Silent model substitution is not allowed.', false);
   }
-  if (options.environment.AI_PROVIDER === 'openai' && providerConfig.modelId !== COMMERCE_MODEL) {
-    throw new AgentBoundaryError('provider_authentication', 'Silent OpenAI model substitution is not allowed.', false);
-  }
-  const modelFactory = options.modelFactory ?? ((modelId, apiKey, baseURL) => {
-    const provider = createOpenAI({ apiKey, baseURL, name: baseURL ? 'litellm' : 'openai' });
-    return baseURL ? provider.chat(modelId) : provider(modelId);
-  });
-  const model = modelFactory(providerConfig.modelId, providerConfig.apiKey, providerConfig.baseURL);
+  const modelFactory = options.modelFactory ?? ((modelId, apiKey) => createOpenAI({ apiKey })(modelId));
+  const model = modelFactory(COMMERCE_MODEL, options.environment.OPENAI_API_KEY);
   const generator = options.generate ?? defaultGenerate;
 
   return async (context) => {
