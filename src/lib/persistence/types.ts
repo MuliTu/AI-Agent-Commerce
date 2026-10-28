@@ -1,5 +1,6 @@
 import type { Constraints, IntentStatus, TurnStatus } from '../domain/contracts';
 import type { Product } from '../domain/contracts';
+import type { OrchestrationResult } from '../orchestration/contracts';
 
 export type ConversationRecord = {
   id: string;
@@ -22,10 +23,24 @@ export type TurnRecord = {
   id: string;
   conversationId: string;
   idempotencyKey: string;
+  acceptanceFingerprint?: string;
   status: TurnStatus;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+  result?: OrchestrationResult;
+  failure?: {
+    code: string;
+    message: string;
+    retryable: boolean;
+  };
+};
+
+export type AcceptTurnInput = {
+  conversation: ConversationRecord;
+  turn: TurnRecord;
+  userMessage: MessageRecord;
+  acceptanceFingerprint: string;
 };
 
 export type IntentRecord = {
@@ -67,4 +82,5 @@ export type CompleteTurnInput = {
   intents: IntentRecord[];
   toolRuns: ToolRunRecord[];
   productSnapshots: ProductSnapshotRecord[];
+  result?: OrchestrationResult;
 };

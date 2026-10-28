@@ -6,11 +6,33 @@ async function runExample(page: import('@playwright/test').Page, name: string) {
   await page.getByRole('button', { name: /Find products|Refine results/ }).click();
 }
 
-test.beforeEach(async ({ page }) => {
-  await page.route('**/api/orchestrate', async (route) => {
+async function persistedState(conversationId: string, turnId: string, prompt: string) {
+  const result = await runTestOrchestration({ conversationId, turnId, prompt });
+  const now = '2026-10-28T12:00:00.000Z';
+  return {
+    conversation: { id: conversationId, title: prompt, createdAt: now, updatedAt: now },
+    turns: [{ id: turnId, conversationId, status: result.status, createdAt: now, updatedAt: now, completedAt: now, result }],
+    messages: [
+      { id: `${turnId}:user`, turnId, role: 'user', content: prompt, status: 'completed', createdAt: now },
+      { id: `${turnId}:assistant`, turnId, role: 'assistant', content: result.response, status: 'completed', createdAt: now },
+    ],
+  };
+}
+
+test.beforeEach(async ({ page, context }) => {
+  let savedState: Record<string, unknown> | undefined;
+  await context.route('**/api/orchestrate*', async (route) => {
+    if (route.request().method() === 'GET') {
+      return route.fulfill({
+        status: savedState ? 200 : 404,
+        contentType: 'application/json',
+        body: JSON.stringify(savedState ?? { error: { code: 'conversation_not_found', message: 'Conversation not found.' } }),
+      });
+    }
     if (route.request().method() !== 'POST') return route.continue();
     const input = route.request().postDataJSON();
     const result = await runTestOrchestration(input);
+    savedState = await persistedState(input.conversationId, input.turnId, input.prompt);
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({ result }),
@@ -23,8 +45,9 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('disabled live mode fails honestly and never falls back to demo', async ({ request }) => {
+  const turnId = `live-disabled-${Date.now()}`;
   const response = await request.post('/api/orchestrate', {
-    data: { prompt: 'Find a laptop', conversationId: 'e2e', turnId: 'live-disabled' },
+    data: { prompt: 'Find a laptop', conversationId: 'e2e', turnId },
   });
   expect(response.status()).toBe(503);
   await expect(response.json()).resolves.toMatchObject({
@@ -38,6 +61,95 @@ test('single intent returns catalog-grounded products', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Apple MacBook Pro 14 Inch Space Grey' })).toBeVisible();
   await page.getByRole('button', { name: /Requests/ }).click();
   await expect(page.getByText('1 intent processed')).toBeVisible();
+});
+
+test('refresh and a second page restore the authoritative conversation by stable URL ID', async ({ page, context }) => {
+  await runExample(page, 'Single intent');
+  await expect(page).toHaveURL(/conversation=/);
+  await expect(page.getByRole('heading', { name: 'Apple MacBook Pro 14 Inch Space Grey' })).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Apple MacBook Pro 14 Inch Space Grey' })).toBeVisible();
+  await expect(page.getByText(/does not survive a server shutdown/)).toBeVisible();
+
+  const secondPage = await context.newPage();
+  await secondPage.goto(page.url());
+  await expect(secondPage.getByRole('heading', { name: 'Apple MacBook Pro 14 Inch Space Grey' })).toBeVisible();
+});
+
+test('clearing a conversation cancels an older delayed restore response', async ({ page }) => {
+  const state = await persistedState('old-conversation', 'old-turn', 'Find me a reliable laptop for work');
+  let release!: () => void;
+  let requestStarted!: () => void;
+  const started = new Promise<void>((resolve) => { requestStarted = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route('**/api/orchestrate?*', async (route) => {
+    requestStarted();
+    await gate;
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(state) });
+  });
+
+  await page.goto('/?conversation=old-conversation');
+  await started;
+  await page.getByRole('button', { name: 'New conversation' }).click();
+  release();
+
+  await expect(page).not.toHaveURL(/conversation=/);
+  await expect(page.getByRole('heading', { name: 'Apple MacBook Pro 14 Inch Space Grey' })).toHaveCount(0);
+  await expect(page.getByText('Conversation saved')).toHaveCount(0);
+});
+
+test('clearing a conversation releases the composer and ignores an older delayed POST response', async ({ page }) => {
+  let requestCount = 0;
+  let releaseOld!: () => void;
+  let oldRequestStarted!: () => void;
+  const oldStarted = new Promise<void>((resolve) => { oldRequestStarted = resolve; });
+  const oldGate = new Promise<void>((resolve) => { releaseOld = resolve; });
+  await page.route('**/api/orchestrate', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    requestCount += 1;
+    const input = route.request().postDataJSON();
+    if (requestCount === 1) {
+      oldRequestStarted();
+      await oldGate;
+    }
+    const result = await runTestOrchestration(input);
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ result }) });
+  });
+
+  await page.getByRole('button', { name: 'Find products' }).click();
+  await oldStarted;
+  await page.getByRole('button', { name: 'New conversation' }).click();
+  const oldResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+    && response.url().endsWith('/api/orchestrate'));
+  releaseOld();
+  await oldResponse;
+  await page.waitForTimeout(50);
+  await expect(page).not.toHaveURL(/conversation=/);
+  await expect(page.getByRole('heading', { name: 'Dell Latitude 5440' })).toHaveCount(0);
+
+  await page.getByLabel('What are you shopping for?').fill('Find me a reliable laptop for work');
+  await page.getByRole('button', { name: 'Find products' }).click();
+  await expect(page.getByRole('heading', { name: 'Apple MacBook Pro 14 Inch Space Grey' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Find basketball shoes' })).toHaveCount(0);
+  expect(requestCount).toBe(2);
+});
+
+test('conversation recovery retries transient reads with bounded backoff', async ({ page }) => {
+  const state = await persistedState('retry-conversation', 'retry-turn', 'Find me a reliable laptop for work');
+  let attempts = 0;
+  await page.route('**/api/orchestrate?*', async (route) => {
+    attempts += 1;
+    if (attempts < 3) {
+      await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'temporary' } }) });
+      return;
+    }
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(state) });
+  });
+
+  await page.goto('/?conversation=retry-conversation');
+  await expect(page.getByRole('heading', { name: 'Apple MacBook Pro 14 Inch Space Grey' })).toBeVisible();
+  expect(attempts).toBe(3);
 });
 
 test('multi-intent request keeps each goal separate', async ({ page }) => {

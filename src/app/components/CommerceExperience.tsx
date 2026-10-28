@@ -1,8 +1,8 @@
 'use client';
 
-import { useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import type { OrchestrationResult } from '@/lib/orchestration';
-import { orchestrationResponseSchema } from '@/lib/orchestration/http';
+import { conversationStateSchema, orchestrationResponseSchema } from '@/lib/orchestration/http';
 import { ClarificationPrompt } from './ClarificationPrompt';
 import { ConversationMessage } from './ConversationMessage';
 import { IntentSection } from './IntentSection';
@@ -17,6 +17,8 @@ type Props = {
 };
 
 const showRequestActivity = process.env.NODE_ENV === 'development';
+const restoreRetryDelays = [250, 500, 1_000] as const;
+type RestoreOutcome = 'running' | 'terminal' | 'cancelled';
 
 const examples = [
   ['Single intent', 'Find me a reliable laptop for work'],
@@ -41,24 +43,102 @@ export function CommerceExperience({
   const [retryingIntentId, setRetryingIntentId] = useState('');
   const [activityOpen, setActivityOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const turn = useRef(0);
-  const inFlight = useRef(false);
+  const [conversationId, setConversationId] = useState('');
+  const [restoredStatus, setRestoredStatus] = useState('');
+  const inFlight = useRef<{ generation: number; requestId: string } | undefined>(undefined);
+  const restoreGeneration = useRef(0);
+
+  const restoreConversation = useCallback(async (id: string, generation: number): Promise<RestoreOutcome> => {
+    const response = await fetch(`/api/orchestrate?conversationId=${encodeURIComponent(id)}`);
+    if (generation !== restoreGeneration.current) return 'cancelled';
+    if (response.status === 404) {
+      setPending(false);
+      setRestoredStatus('This conversation was not found. Start a new conversation to continue.');
+      return 'terminal';
+    }
+    if (!response.ok) {
+      if (response.status === 429 || response.status >= 500) throw new Error('Conversation state is temporarily unavailable.');
+      setPending(false);
+      setRestoredStatus('This conversation cannot be loaded. Start a new conversation to continue.');
+      return 'terminal';
+    }
+    const state = conversationStateSchema.parse(await response.json());
+    if (generation !== restoreGeneration.current) return 'cancelled';
+    const latestTurn = state.turns.at(-1);
+    const latestUserMessage = state.messages.filter(({ role }) => role === 'user').at(-1);
+    setLastPrompt(latestUserMessage?.content ?? '');
+    setResult(latestTurn?.result);
+    setPending(latestTurn?.status === 'queued' || latestTurn?.status === 'running');
+    setRestoredStatus(latestTurn?.failure?.message
+      ?? (latestTurn?.status === 'queued' || latestTurn?.status === 'running'
+        ? 'The accepted request is still running on this server.'
+        : ''));
+    if (latestTurn?.status === 'queued' || latestTurn?.status === 'running') return 'running';
+    return 'terminal';
+  }, []);
+
+  useEffect(() => {
+    const id = new URL(window.location.href).searchParams.get('conversation')?.trim();
+    if (!id) return;
+    const stableId = id;
+    const generation = ++restoreGeneration.current;
+    let active = true;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let transientFailures = 0;
+    async function poll() {
+      try {
+        const outcome = await restoreConversation(stableId, generation);
+        if (!active || generation !== restoreGeneration.current || outcome === 'cancelled') return;
+        setConversationId(stableId);
+        transientFailures = 0;
+        if (outcome === 'running') timeout = setTimeout(poll, 750);
+      } catch {
+        if (!active || generation !== restoreGeneration.current) return;
+        const delay = restoreRetryDelays[transientFailures];
+        transientFailures += 1;
+        if (delay !== undefined) {
+          timeout = setTimeout(poll, delay);
+          return;
+        }
+        setPending(false);
+        setConversationId(stableId);
+        setRestoredStatus('Conversation recovery is temporarily unavailable after several attempts. Retry by refreshing the page.');
+      }
+    }
+    void poll();
+    return () => {
+      active = false;
+      if (timeout) clearTimeout(timeout);
+      if (restoreGeneration.current === generation) restoreGeneration.current += 1;
+    };
+  }, [restoreConversation]);
 
   async function runTurn(submitted: string, retryIntentId?: string) {
-    if (inFlight.current) return;
-    inFlight.current = true;
+    if (inFlight.current?.generation === restoreGeneration.current) return;
+    const activeConversationId = conversationId || crypto.randomUUID();
+    const turnId = crypto.randomUUID();
+    let generation = restoreGeneration.current;
+    if (!conversationId) {
+      generation = ++restoreGeneration.current;
+      setConversationId(activeConversationId);
+      const url = new URL(window.location.href);
+      url.searchParams.set('conversation', activeConversationId);
+      window.history.replaceState(null, '', url);
+    }
+    if (inFlight.current?.generation === generation) return;
+    const request = { generation, requestId: turnId };
+    inFlight.current = request;
     setPending(true);
     setRetryingIntentId(retryIntentId ?? '');
     setError('');
-    turn.current += 1;
     try {
       const response = await fetch('/api/orchestrate', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           prompt: submitted,
-          conversationId: 'local-shopping-session',
-          turnId: `turn-${turn.current}`,
+          conversationId: activeConversationId,
+          turnId,
           previous: result,
           retryIntentId,
         }),
@@ -70,12 +150,17 @@ export function CommerceExperience({
         throw new Error(message);
       }
       const parsed = orchestrationResponseSchema.parse(body);
+      if (generation !== restoreGeneration.current || inFlight.current?.requestId !== request.requestId) return;
       setResult(parsed.result);
+      setRestoredStatus('');
       if (!retryIntentId) setLastPrompt(submitted);
     } catch (caught) {
+      if (generation !== restoreGeneration.current || inFlight.current?.requestId !== request.requestId) return;
       setError(caught instanceof Error ? caught.message : 'The shopping turn failed.');
     } finally {
-      inFlight.current = false;
+      if (inFlight.current?.requestId !== request.requestId) return;
+      inFlight.current = undefined;
+      if (generation !== restoreGeneration.current) return;
       setPending(false);
       setRetryingIntentId('');
     }
@@ -95,7 +180,12 @@ export function CommerceExperience({
       <a className="skip-link" href="#recommendations">Skip to recommendations</a>
       <aside className={`sidebar ${sidebarOpen ? 'sidebar--open' : ''}`} aria-label="Prompt starters">
         <div className="brand"><span className="brand__mark">B</span><strong>bazak</strong><button className="icon-button sidebar__close" type="button" onClick={() => setSidebarOpen(false)} aria-label="Close prompt starters">×</button></div>
-        <button className="new-conversation" type="button" onClick={() => { setResult(undefined); setLastPrompt(''); setError(''); }}>＋ Clear current results</button>
+        <button className="new-conversation" type="button" onClick={() => {
+          restoreGeneration.current += 1;
+          inFlight.current = undefined;
+          setResult(undefined); setLastPrompt(''); setError(''); setRestoredStatus(''); setConversationId(''); setPending(false);
+          const url = new URL(window.location.href); url.searchParams.delete('conversation'); window.history.replaceState(null, '', url);
+        }}>＋ New conversation</button>
         <p className="nav-label">Prompt starters</p>
         <nav className="conversation-nav">{examples.slice(0, 4).map(([label, value], index) =>
           <button type="button" key={label} aria-label={`Use prompt starter ${index + 1}`} className={index === 1 ? 'active' : ''} onClick={() => { setPrompt(value); setSidebarOpen(false); }}><span>{label}</span><small>{index === 1 ? 'Selected' : 'Example'}</small></button>)}</nav>
@@ -122,6 +212,8 @@ export function CommerceExperience({
                 <p>Catalog-grounded recommendations, separated by what you are shopping for.</p>
               </header>
               <p className="mode-note">Shopping turns use {providerLabel} and the validated DummyJSON catalog.</p>
+              {conversationId && <p className="trust-note"><strong>Conversation saved</strong><span>Refresh or open this URL in another tab to resume. Accepted work continues if the browser disconnects, but does not survive a server shutdown.</span></p>}
+              {restoredStatus && <RecommendationState state="failure" title="Recovery status" description={restoredStatus} />}
               {!providerEnabled && <RecommendationState state="failure" title="Model configuration required" description={configurationError || 'Set the server-only LLM provider, API key, model, and base URL before sending a shopping request.'} />}
               <p className="trust-note"><strong>Catalog-grounded only</strong><span>Product facts and IDs always come from the validated catalog.</span></p>
 

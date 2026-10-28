@@ -80,6 +80,21 @@ export const migrations: readonly Migration[] = [
       CREATE INDEX idx_product_snapshots_turn ON product_snapshots(turn_id, created_at, id);
     `,
   },
+  {
+    version: 2,
+    sql: `
+      ALTER TABLE turns ADD COLUMN result_json TEXT;
+      ALTER TABLE turns ADD COLUMN failure_code TEXT;
+      ALTER TABLE turns ADD COLUMN failure_message TEXT;
+    `,
+  },
+  {
+    version: 3,
+    sql: `
+      ALTER TABLE turns ADD COLUMN acceptance_fingerprint TEXT;
+      ALTER TABLE turns ADD COLUMN failure_retryable INTEGER NOT NULL DEFAULT 0 CHECK (failure_retryable IN (0, 1));
+    `,
+  },
 ] as const;
 
 export function applyMigrations(database: DatabaseSync): void {

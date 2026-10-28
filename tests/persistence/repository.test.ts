@@ -135,7 +135,7 @@ describe('CommerceRepository', () => {
     repository = new CommerceRepository(databasePath);
 
     expect(repository.database.prepare('SELECT version FROM schema_migrations ORDER BY version').all())
-      .toEqual([{ version: 1 }]);
+      .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
   });
 
   it('round-trips conversations, messages, turns, intents, tools, and snapshots in stable order', () => {

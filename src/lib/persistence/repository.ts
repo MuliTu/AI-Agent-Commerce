@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { productSchema } from '../domain/contracts';
+import { orchestrationResultSchema } from '../orchestration/contracts';
 import { applyMigrations } from './migrations';
 import type {
   CompleteTurnInput,
+  AcceptTurnInput,
   ConversationRecord,
   IntentRecord,
   MessageRecord,
@@ -125,10 +127,23 @@ function turnFromRow(row: SqlRow): TurnRecord {
     id: String(row.id),
     conversationId: String(row.conversation_id),
     idempotencyKey: String(row.idempotency_key),
+    ...(row.acceptance_fingerprint === null || row.acceptance_fingerprint === undefined
+      ? {}
+      : { acceptanceFingerprint: String(row.acceptance_fingerprint) }),
     status: row.status as TurnRecord['status'],
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     ...(row.completed_at === null ? {} : { completedAt: String(row.completed_at) }),
+    ...(row.result_json === null || row.result_json === undefined
+      ? {}
+      : { result: orchestrationResultSchema.parse(parseJson(row.result_json)) }),
+    ...(row.failure_code === null || row.failure_code === undefined
+      ? {}
+      : { failure: {
+        code: String(row.failure_code),
+        message: String(row.failure_message),
+        retryable: Number(row.failure_retryable) === 1,
+      } }),
   };
 }
 
@@ -212,6 +227,80 @@ export class CommerceRepository implements Disposable {
       .map(conversationFromRow);
   }
 
+  acceptTurn(input: AcceptTurnInput): TurnRecord {
+    required(input.conversation.id, 'conversation.id');
+    required(input.turn.id, 'turn.id');
+    required(input.turn.idempotencyKey, 'turn.idempotencyKey');
+    required(input.acceptanceFingerprint, 'turn.acceptanceFingerprint');
+    if (input.turn.conversationId !== input.conversation.id
+      || input.userMessage.conversationId !== input.conversation.id
+      || input.userMessage.turnId !== input.turn.id
+      || input.userMessage.role !== 'user') {
+      throw new PersistenceConflictError('Accepted turn records do not share the same ownership.');
+    }
+    this.database.exec('BEGIN IMMEDIATE');
+    try {
+      const existing = this.database.prepare('SELECT * FROM turns WHERE idempotency_key = ?')
+        .get(input.turn.idempotencyKey) as SqlRow | undefined;
+      if (existing) {
+        const turn = turnFromRow(existing);
+        const message = this.database.prepare('SELECT * FROM messages WHERE id = ?')
+          .get(input.userMessage.id) as SqlRow | undefined;
+        if (turn.id !== input.turn.id || turn.conversationId !== input.conversation.id
+          || turn.acceptanceFingerprint !== input.acceptanceFingerprint
+          || !message || messageFromRow(message).content !== input.userMessage.content) {
+          throw new PersistenceConflictError(`Idempotency key ${input.turn.idempotencyKey} is bound to different input.`);
+        }
+        this.database.exec('COMMIT');
+        return turn;
+      }
+      const conversation = this.getConversation(input.conversation.id);
+      if (!conversation) this.createConversation(input.conversation);
+      this.createTurn({ ...input.turn, acceptanceFingerprint: input.acceptanceFingerprint });
+      this.appendMessage(input.userMessage);
+      this.database.exec('COMMIT');
+      return this.getTurn(input.turn.id)!;
+    } catch (error) {
+      this.database.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  markTurnRunning(turnId: string, updatedAt: string): TurnRecord {
+    const result = this.database.prepare(`
+      UPDATE turns SET status = 'running', updated_at = ?
+      WHERE id = ? AND status = 'queued'
+    `).run(updatedAt, turnId);
+    if (result.changes !== 1) throw new PersistenceConflictError(`Turn ${turnId} cannot transition to running.`);
+    return this.getTurn(turnId)!;
+  }
+
+  failTurn(turnId: string, input: { code: string; message: string; retryable?: boolean; completedAt: string }): TurnRecord {
+    required(input.code, 'failure.code');
+    required(input.message, 'failure.message');
+    const result = this.database.prepare(`
+      UPDATE turns
+      SET status = 'failed', failure_code = ?, failure_message = ?, failure_retryable = ?, updated_at = ?, completed_at = ?
+      WHERE id = ? AND status IN ('queued', 'running')
+    `).run(input.code, input.message, input.retryable ? 1 : 0, input.completedAt, input.completedAt, turnId);
+    if (result.changes !== 1) throw new PersistenceConflictError(`Turn ${turnId} cannot transition to failed.`);
+    return this.getTurn(turnId)!;
+  }
+
+  recoverInterruptedTurns(recoveredAt: string): TurnRecord[] {
+    const pending = this.database.prepare(`
+      SELECT id FROM turns WHERE status IN ('queued', 'running') ORDER BY created_at, id
+    `).all() as Array<{ id: string }>;
+    for (const { id } of pending) {
+      this.failTurn(id, {
+        code: 'server_restart',
+        message: 'This accepted request was interrupted when the server stopped. Send it again to retry.',
+        completedAt: recoveredAt,
+      });
+    }
+    return pending.map(({ id }) => this.getTurn(id)!);
+  }
+
   createTurn(record: TurnRecord): TurnRecord {
     required(record.id, 'turn.id');
     required(record.conversationId, 'turn.conversationId');
@@ -224,10 +313,10 @@ export class CommerceRepository implements Disposable {
       return existing;
     }
     this.database.prepare(`
-      INSERT INTO turns (id, conversation_id, idempotency_key, status, created_at, updated_at, completed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(record.id, record.conversationId, record.idempotencyKey, record.status,
-      record.createdAt, record.updatedAt, record.completedAt ?? null);
+      INSERT INTO turns (id, conversation_id, idempotency_key, acceptance_fingerprint, status, created_at, updated_at, completed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(record.id, record.conversationId, record.idempotencyKey, record.acceptanceFingerprint ?? null,
+      record.status, record.createdAt, record.updatedAt, record.completedAt ?? null);
     return record;
   }
 
@@ -300,8 +389,12 @@ export class CommerceRepository implements Disposable {
       if (input.assistantMessage) this.appendMessage(input.assistantMessage);
 
       this.database.prepare(`
-        UPDATE turns SET status = ?, completion_fingerprint = ?, updated_at = ?, completed_at = ? WHERE id = ?
-      `).run(input.status, digest, input.completedAt, input.completedAt, input.turnId);
+        UPDATE turns
+        SET status = ?, completion_fingerprint = ?, result_json = ?, failure_code = NULL,
+            failure_message = NULL, updated_at = ?, completed_at = ?
+        WHERE id = ?
+      `).run(input.status, digest, input.result === undefined ? null : json(orchestrationResultSchema.parse(input.result)),
+        input.completedAt, input.completedAt, input.turnId);
       this.database.prepare(`
         UPDATE conversations SET updated_at = ? WHERE id = (SELECT conversation_id FROM turns WHERE id = ?)
       `).run(input.completedAt, input.turnId);

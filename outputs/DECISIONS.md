@@ -89,6 +89,8 @@ This log records current decisions and proposals. “Accepted” means accepted 
 
 **Trade-offs and boundary:** Local SQLite is simple but single-node. Its durability depends on the deployment filesystem. It does not keep code running through server shutdown. Client-independent means browser disconnect does not cancel accepted server work; it does **not** mean server-independent or shutdown-proof execution.
 
+**Startup recovery policy:** When a server process first opens the repository, any leftover `queued` or `running` turn is transitioned to `failed` with the machine-readable reason `server_restart`. The application does not automatically replay it because a provider or catalog request may already have consumed cost or produced an uncertain outcome. The UI reports the interruption and the shopper may submit a new turn explicitly. This policy is bounded, idempotent, and never presents stale work as still running.
+
 **Future production alternative:** A managed durable database plus queue/worker lease model for distributed execution and restart-safe jobs.
 
 ## D-08 — Limit transient retries to five total attempts

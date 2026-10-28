@@ -1,0 +1,168 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ConversationExecutionService } from '../src/lib/execution';
+import { CommerceRepository, PersistenceConflictError } from '../src/lib/persistence';
+import type { OrchestrationResult } from '../src/lib/orchestration';
+import { createGetHandler, createPostHandler } from '../src/app/api/orchestrate/route';
+import { AgentBoundaryError } from '../src/lib/agent';
+
+const result: OrchestrationResult = {
+  turnId: 'turn-1',
+  status: 'completed',
+  response: 'I found one validated option.',
+  outcomes: [{
+    intent: { id: 'intent-1', goal: 'Find a laptop', query: 'laptop', constraints: {}, status: 'completed' },
+    products: [],
+  }],
+};
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+describe('ConversationExecutionService', () => {
+  const directories: string[] = [];
+
+  afterEach(() => {
+    for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+  });
+
+  function databasePath() {
+    const directory = mkdtempSync(join(tmpdir(), 'bazak-execution-'));
+    directories.push(directory);
+    return join(directory, 'commerce.sqlite');
+  }
+
+  it('persists accepted work before completion and keeps running after its first caller disconnects', async () => {
+    const path = databasePath();
+    const repository = new CommerceRepository(path);
+    const completion = deferred<OrchestrationResult>();
+    const service = new ConversationExecutionService(repository, () => completion.promise, () => '2026-10-28T11:00:00.000Z');
+
+    const execution = service.execute({
+      conversationId: 'conversation-1', turnId: 'turn-1', prompt: 'Find a laptop',
+    });
+    expect(service.readConversation('conversation-1').turns[0].status).toBe('running');
+
+    const secondClient = new ConversationExecutionService(new CommerceRepository(path), vi.fn());
+    expect(secondClient.readConversation('conversation-1').messages[0].content).toBe('Find a laptop');
+
+    completion.resolve(result);
+    await expect(execution).resolves.toEqual(result);
+    expect(secondClient.readConversation('conversation-1').turns[0]).toMatchObject({
+      status: 'completed', result,
+    });
+    repository.close();
+  });
+
+  it('binds in-flight and completed replays to the canonical semantic acceptance fingerprint', async () => {
+    const repository = new CommerceRepository(databasePath());
+    const completion = deferred<OrchestrationResult>();
+    const runner = vi.fn(() => completion.promise);
+    let now = '2026-10-28T11:00:00.000Z';
+    const service = new ConversationExecutionService(repository, runner, () => now);
+    const input = { conversationId: 'conversation-1', turnId: 'turn-1', prompt: 'Find a laptop' };
+
+    const first = service.execute(input);
+    const second = service.execute(input);
+    expect(() => service.execute({ ...input, prompt: 'Find shoes' })).toThrow(PersistenceConflictError);
+    expect(() => service.execute({ ...input, retryIntentId: 'intent-1' })).toThrow(PersistenceConflictError);
+    completion.resolve(result);
+    await expect(Promise.all([first, second])).resolves.toEqual([result, result]);
+
+    now = '2026-10-29T12:00:00.000Z';
+    await expect(service.execute(input)).resolves.toEqual(result);
+    expect(() => service.execute({ ...input, prompt: 'Find shoes' })).toThrow(PersistenceConflictError);
+    expect(() => service.execute({ ...input, retryIntentId: 'intent-1' })).toThrow(PersistenceConflictError);
+    expect(runner).toHaveBeenCalledOnce();
+    repository.close();
+  });
+
+  it('marks startup leftovers failed instead of claiming server-shutdown survival', () => {
+    const repository = new CommerceRepository(databasePath());
+    repository.acceptTurn({
+      conversation: { id: 'conversation-1', createdAt: '2026-10-28T10:00:00.000Z', updatedAt: '2026-10-28T10:00:00.000Z' },
+      turn: { id: 'turn-1', conversationId: 'conversation-1', idempotencyKey: 'conversation-1:turn-1', status: 'queued', createdAt: '2026-10-28T10:00:00.000Z', updatedAt: '2026-10-28T10:00:00.000Z' },
+      userMessage: { id: 'turn-1:user', conversationId: 'conversation-1', turnId: 'turn-1', role: 'user', content: 'Find a laptop', status: 'completed', createdAt: '2026-10-28T10:00:00.000Z' },
+      acceptanceFingerprint: 'test-fingerprint',
+    });
+    repository.markTurnRunning('turn-1', '2026-10-28T10:00:01.000Z');
+    const service = new ConversationExecutionService(repository, vi.fn(), () => '2026-10-28T11:00:00.000Z');
+
+    expect(service.recoverInterruptedWork()).toBe(1);
+    expect(service.readConversation('conversation-1').turns[0]).toMatchObject({
+      status: 'failed',
+      failure: { code: 'server_restart' },
+    });
+    expect(service.recoverInterruptedWork()).toBe(0);
+    expect(() => repository.markTurnRunning('turn-1', '2026-10-28T11:00:01.000Z'))
+      .toThrow(PersistenceConflictError);
+    repository.close();
+  });
+
+  it('rejects a reused stable turn ID with different input', async () => {
+    const repository = new CommerceRepository(databasePath());
+    const service = new ConversationExecutionService(repository, async () => result, () => '2026-10-28T11:00:00.000Z');
+    await service.execute({ conversationId: 'conversation-1', turnId: 'turn-1', prompt: 'Find a laptop' });
+
+    expect(() => service.execute({ conversationId: 'conversation-1', turnId: 'turn-1', prompt: 'Find shoes' }))
+      .toThrow(PersistenceConflictError);
+    repository.close();
+  });
+});
+
+describe('orchestration route contracts', () => {
+  it('validates POST input and delegates to the injected execution service', async () => {
+    const execute = vi.fn(async () => result);
+    const handler = createPostHandler({ execute });
+    const response = await handler(new Request('http://local/api/orchestrate', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'Find a laptop', conversationId: 'conversation-1', turnId: 'turn-1' }),
+    }));
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ result });
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
+  it('preserves a typed provider error on the first failure and an exact persisted replay', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'bazak-route-error-'));
+    const repository = new CommerceRepository(join(directory, 'commerce.sqlite'));
+    let now = '2026-10-28T11:00:00.000Z';
+    const runner = vi.fn(async () => {
+      throw new AgentBoundaryError('provider_authentication', 'The model provider rejected the request.', false);
+    });
+    const service = new ConversationExecutionService(repository, runner, () => now);
+    const handler = createPostHandler(service);
+    const request = () => new Request('http://local/api/orchestrate', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'Find a laptop', conversationId: 'conversation-auth', turnId: 'turn-auth' }),
+    });
+
+    const first = await handler(request());
+    expect(first.status).toBe(503);
+    await expect(first.json()).resolves.toMatchObject({ error: { code: 'provider_authentication', retryable: false } });
+    now = '2026-10-29T11:00:00.000Z';
+    const replay = await handler(request());
+    expect(replay.status).toBe(503);
+    await expect(replay.json()).resolves.toMatchObject({ error: { code: 'provider_authentication', retryable: false } });
+    expect(runner).toHaveBeenCalledOnce();
+    repository.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it('returns persisted state by conversation ID and a truthful not-found response', async () => {
+    const state = {
+      conversation: { id: 'conversation-1', createdAt: 'now', updatedAt: 'now' },
+      turns: [{ id: 'turn-1', conversationId: 'conversation-1', status: 'completed' as const, createdAt: 'now', updatedAt: 'now', completedAt: 'now', result }],
+      messages: [{ id: 'turn-1:user', turnId: 'turn-1', role: 'user' as const, content: 'Find a laptop', status: 'completed' as const, createdAt: 'now' }],
+    };
+    const handler = createGetHandler({ readConversation: () => state });
+    const response = await handler(new Request('http://local/api/orchestrate?conversationId=conversation-1'));
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(state);
+  });
+});
