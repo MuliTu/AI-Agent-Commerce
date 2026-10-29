@@ -1,11 +1,11 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ConversationExecutionService, PersistedExecutionError } from '../src/lib/execution';
 import { CommerceRepository, PersistenceConflictError } from '../src/lib/persistence';
 import type { OrchestrationResult } from '../src/lib/orchestration';
-import { createGetHandler, createPostHandler } from '../src/app/api/orchestrate/route';
+import { createGetHandler, createPostHandler, POST } from '../src/app/api/orchestrate/route';
 import { createConversationsGetHandler, createConversationsPatchHandler } from '../src/app/api/conversations/route';
 import { AgentBoundaryError } from '../src/lib/agent';
 import { toProviderAgentError } from '../src/lib/agent/errors';
@@ -159,6 +159,35 @@ describe('ConversationExecutionService', () => {
 });
 
 describe('orchestration route contracts', () => {
+  it('returns safe JSON when a disposable SQLite database is corrupt during service construction', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'bazak-corrupt-route-'));
+    const databasePath = join(directory, 'commerce.sqlite');
+    const corruptContents = 'this is not a sqlite database';
+    writeFileSync(databasePath, corruptContents);
+    vi.stubEnv('BAZAK_DATABASE_PATH', databasePath);
+    vi.stubEnv('NODE_ENV', 'production');
+
+    try {
+      const response = await POST(new Request('http://local/api/orchestrate', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: 'Find a laptop', conversationId: 'corrupt-db', turnId: 'turn-corrupt-db' }),
+      }));
+
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toEqual({
+        error: {
+          code: 'orchestration_failed',
+          message: 'The shopping turn could not be completed.',
+          retryable: false,
+        },
+      });
+      expect(readFileSync(databasePath, 'utf8')).toBe(corruptContents);
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it('classifies a missing conversation ID as request validation', async () => {
     vi.stubEnv('NODE_ENV', 'development');
     const response = await createGetHandler({ readConversation: vi.fn() })(new Request('http://local/api/orchestrate'));

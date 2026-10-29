@@ -87,7 +87,16 @@ export function createPostHandler(service: Pick<ConversationExecutionService, 'e
 }
 
 export async function POST(request: Request) {
-  return createPostHandler(getConversationExecutionService())(request);
+  try {
+    return await createPostHandler(getConversationExecutionService())(request);
+  } catch (error) {
+    return errorResponse(
+      { code: 'orchestration_failed', message: 'The shopping turn could not be completed.', retryable: false },
+      500,
+      error,
+      'persistence',
+    );
+  }
 }
 
 export function createGetHandler(service: Pick<ConversationExecutionService, 'readConversation'>) {
@@ -119,5 +128,14 @@ export function createGetHandler(service: Pick<ConversationExecutionService, 're
 }
 
 export async function GET(request: Request) {
-  return createGetHandler(getConversationExecutionService())(request);
+  try {
+    return await createGetHandler(getConversationExecutionService())(request);
+  } catch (error) {
+    return errorResponse(
+      { code: 'conversation_read_failed', message: 'The conversation could not be loaded.' },
+      500,
+      error,
+      'persistence',
+    );
+  }
 }
