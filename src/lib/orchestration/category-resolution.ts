@@ -1,7 +1,7 @@
 const CATEGORY_ALIASES: Readonly<Record<string, readonly string[]>> = {
   'mobile-accessories': ['phone case', 'phone cases', 'phone charger', 'phone chargers', 'screen protector', 'screen protectors', 'mobile accessory', 'mobile accessories'],
   smartphones: ['iphone', 'iphones', 'phone', 'phones', 'smartphone', 'smartphones', 'mobile', 'mobiles', 'טלפון', 'טלפונים', 'סמארטפון', 'סמארטפונים'],
-  fragrances: ['perfume', 'perfumes', 'fragrance', 'fragrances', 'cologne', 'colognes'],
+  fragrances: ['perfume', 'perfumes', 'fragrance', 'fragrances', 'cologne', 'colognes', 'בושם', 'בשמים'],
   laptops: ['laptop', 'laptops', 'notebook', 'notebooks', 'לפטופ', 'לפטופים', 'מחשב נייד', 'מחשבים ניידים'],
   luggage: ['luggage', 'suitcase', 'suitcases', 'bag', 'bags', 'מזוודה', 'מזוודות', 'תיק נסיעות'],
   'kitchen-accessories': ['plate', 'plates', 'dish', 'dishes', 'צלחת', 'צלחות', 'כלי אוכל'],
@@ -44,7 +44,17 @@ function matchingSegments(
   category: string | undefined,
   availableCategories: readonly string[],
 ): string[] {
-  const segments = prompt.split(/\s+(?:and|plus)\s+|[,;]/iu);
+  const segments = prompt.split(/\s+(?:and|plus|וגם|בנוסף)\s+|[,;]/iu).flatMap((segment) => {
+    const attachedConjunction = /\s+ו(?=\p{L})/gu;
+    for (const match of segment.matchAll(attachedConjunction)) {
+      const prefix = segment.slice(0, match.index).trim();
+      const suffix = segment.slice(match.index + match[0].length).trim();
+      const prefixCategory = resolveCatalogCategory(undefined, prefix, availableCategories);
+      const suffixCategory = resolveCatalogCategory(undefined, suffix, availableCategories);
+      if (prefixCategory && suffixCategory && prefixCategory !== suffixCategory) return [prefix, suffix];
+    }
+    return [segment];
+  });
   if (intentCount === 1) return segments;
   const contextTokens = new Set(normalize(context).split(/\s+/u).filter((token) => token.length > 2));
   return segments.filter((segment) => {
@@ -83,7 +93,7 @@ export function intentHasExplicitUsdBudget(
   availableCategories: readonly string[],
 ): boolean {
   return matchingSegments(prompt, context, intentCount, category, availableCategories)
-    .some((segment) => /(?:\$\s*\d|\bUSD\s*\d|\d\s*USD\b)/iu.test(segment));
+    .some((segment) => /(?:\$\s*\d|\bUSD\s*\d|\d\s*USD\b|\bdollars?\s+\d|\d\s*dollars?\b|(?:^|\s)דולר(?:ים)?\s+\d|\d\s*דולר(?:ים)?(?![\p{L}\p{N}]))/iu.test(segment));
 }
 
 export function intentIsOutsideProductCatalog(

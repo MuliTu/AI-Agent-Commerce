@@ -384,6 +384,49 @@ describe('single-agent multi-intent orchestration', () => {
     expect(search).not.toHaveBeenCalled();
   });
 
+  it('preserves and enforces an explicit Hebrew USD price ceiling from the provider plan', async () => {
+    const affordableLaptop: Product = {
+      ...phone,
+      id: 31,
+      title: 'Affordable Laptop',
+      category: 'laptops',
+      price: 799,
+    };
+    const expensiveLaptop: Product = {
+      ...affordableLaptop,
+      id: 32,
+      title: 'Premium Laptop',
+      price: 1399.99,
+    };
+    const catalogClient = catalog();
+    catalogClient.listCategories = vi.fn(async () => [
+      ...await catalog().listCategories(),
+      { slug: 'laptops', name: 'Laptops', url: 'https://dummyjson.com/products/category/laptops' },
+    ]);
+    catalogClient.listProductsByCategory = vi.fn(async () => page([affordableLaptop, expensiveLaptop]));
+    const orchestrator = createIntentOrchestrator({
+      catalog: catalogClient,
+      extractIntents: async () => ({
+        response: 'מצאתי מחשבים ניידים מתאימים.',
+        intents: [{
+          goal: 'מחשב נייד עד 800 דולר',
+          query: 'laptop',
+          constraints: { category: 'laptops', maxPrice: 800, minRating: 4, inStock: true },
+        }],
+      }),
+    });
+
+    const result = await orchestrator.run({
+      turnId: 'hebrew-budget',
+      conversationId: 'conversation-1',
+      prompt: 'אני צריך מחשב נייד עד 800 דולר. דירוג של לפחות 4, ורק מוצרים שבמלאי',
+    });
+
+    expect(result.outcomes[0].intent.constraints.maxPrice).toBe(800);
+    expect(result.outcomes[0].products.map(({ product }) => product.id)).toEqual([affordableLaptop.id]);
+    expect(result.outcomes[0].products.every(({ product }) => product.price <= 800)).toBe(true);
+  });
+
   it('keeps multiple intents separate while returning one coherent response', async () => {
     const search = vi.fn(async ({ query }: { query: string }) =>
       page(query.includes('phone') ? [phone] : [fragrance]));
