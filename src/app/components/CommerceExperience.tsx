@@ -353,6 +353,10 @@ export function CommerceExperience({
       <label className="visually-hidden" htmlFor="shopper-prompt">{uiLocale === 'he' ? 'מה תרצה לקנות?' : 'What are you shopping for?'}</label>
       <textarea id="shopper-prompt" dir={uiLocale === 'he' ? 'rtl' : 'ltr'} value={prompt} onChange={(event) => {
         setPrompt(event.target.value);
+        if (clarificationAnswer) {
+          setClarificationAnswer(undefined);
+          setSelectedClarification('');
+        }
         if (event.target.value.trim()) setUiLocale(localeFor(event.target.value));
       }} onKeyDown={(event) => {
         if (event.key === 'Enter' && !event.shiftKey) {

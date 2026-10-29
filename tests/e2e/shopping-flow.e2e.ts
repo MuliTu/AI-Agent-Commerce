@@ -354,6 +354,26 @@ test('clarification can refine the same intent without inventing products', asyn
   await expect(page.getByRole('heading', { name: /What kind of product/ })).toHaveCount(0);
 });
 
+test('editing a selected clarification into a new topic clears the stale structured answer', async ({ page }) => {
+  const requests: Array<Record<string, unknown>> = [];
+  await page.route('**/api/orchestrate', async (route) => {
+    if (route.request().method() === 'POST') requests.push(route.request().postDataJSON());
+    await route.fallback();
+  });
+
+  await runExample(page, 'Clarification');
+  await page.getByLabel('Laptops').check();
+
+  const prompt = page.getByLabel('What are you shopping for?');
+  await expect(prompt).toHaveValue('Laptops');
+  await prompt.fill('Find an everyday fragrance');
+  await page.getByRole('button', { name: 'Refine results' }).click();
+
+  expect(requests).toHaveLength(2);
+  expect(requests[1]).toMatchObject({ prompt: 'Find an everyday fragrance' });
+  expect(requests[1]).not.toHaveProperty('clarification');
+});
+
 test('a second clarification keeps the conversation ID and applies the selected budget', async ({ page }) => {
   const requests: Array<Record<string, unknown>> = [];
   await page.route('**/api/orchestrate', async (route) => {
