@@ -23,3 +23,19 @@ export {
   type ProviderIntentExtractorOptions,
 } from './provider';
 export { evaluateClarification, selectTurnClarification, type Clarification } from './clarification';
+export {
+  semanticEvidenceAssessmentSchema,
+  semanticEvidenceBatchSchema,
+  validateSemanticEvidenceBatch,
+  runSemanticEvidenceShadow,
+  type SemanticEvidenceAssessment,
+  type SemanticEvidenceBatch,
+  type SemanticEvidenceEvaluator,
+  type SemanticEvidenceInput,
+  type SemanticEvidenceShadowReport,
+} from './semantic-evidence';
+export {
+  createProviderSemanticEvidenceEvaluator,
+  type ProviderSemanticEvidenceEvaluatorOptions,
+  type SemanticEvidenceGenerator,
+} from './semantic-evidence-provider';

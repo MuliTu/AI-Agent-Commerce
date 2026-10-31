@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { AgentBoundaryError, createCatalogToolHandlers, type AgentCatalogClient } from '../agent';
-import type { Constraints, ShoppingIntent, TurnStatus } from '../domain/contracts';
+import type { Constraints, Product, ShoppingIntent, TurnStatus } from '../domain/contracts';
 import { rankCatalogProducts } from '../ranking';
 import { executeWithRetry, type RetryOptions } from '../reliability';
 import {
@@ -20,6 +20,11 @@ import {
 } from './feature-evidence';
 import { decideFollowUpTargets, inspectPlanCategoryCoverage, isExclusiveNamedFollowUp } from './plan-integrity';
 import { classifyIntentRequest } from './request-classification';
+import {
+  runSemanticEvidenceShadow,
+  type SemanticEvidenceEvaluator,
+  type SemanticEvidenceShadowReport,
+} from './semantic-evidence';
 import {
   intentHasExplicitUsdBudget,
   intentHasUnsupportedIlsBudgetForCategory,
@@ -48,6 +53,8 @@ export type IntentOrchestratorOptions = {
   extractIntents: IntentExtractor;
   resultLimit?: number;
   retryOptions?: RetryOptions;
+  semanticEvidenceEvaluator?: SemanticEvidenceEvaluator;
+  observeSemanticEvidence?: (report: SemanticEvidenceShadowReport) => void;
 };
 
 export type OrchestrateTurnInput = {
@@ -58,6 +65,31 @@ export type OrchestrateTurnInput = {
   retryIntentId?: string;
   clarification?: ClarificationAnswer;
 };
+
+const SEMANTIC_SHADOW_TIMEOUT_MS = 2_000;
+
+function observeSemanticShadow(input: {
+  evaluator: SemanticEvidenceEvaluator;
+  products: Product[];
+  requirements: ReturnType<typeof requestedFeatureEvidenceForIntent>;
+  observer?: (report: SemanticEvidenceShadowReport) => void;
+}): void {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutReport = new Promise<SemanticEvidenceShadowReport>((resolve) => {
+    timeout = setTimeout(() => resolve({ status: 'failed', code: 'evaluation_failed' }), SEMANTIC_SHADOW_TIMEOUT_MS);
+    timeout.unref?.();
+  });
+  void Promise.race([
+    runSemanticEvidenceShadow({
+      evaluator: input.evaluator,
+      products: input.products,
+      requirements: input.requirements,
+    }),
+    timeoutReport,
+  ]).then((report) => input.observer?.(report)).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  }).catch(() => undefined);
+}
 
 function clarificationUpdate(answer: ClarificationAnswer, prior: IntentOutcome): ExtractedIntent {
   const clarification = prior.clarification;
@@ -611,6 +643,21 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
             intentCount: planned.length,
             availableCategories,
           });
+          if (options.semanticEvidenceEvaluator && featureRequirements.length > 0) {
+            const shadowCandidates = rankCatalogProducts(result.products, {
+              query: intent.query,
+              constraints: intent.constraints,
+              limit: 5,
+            }).map(({ product }) => product);
+            if (shadowCandidates.length > 0) {
+              observeSemanticShadow({
+                evaluator: options.semanticEvidenceEvaluator,
+                products: shadowCandidates,
+                requirements: featureRequirements,
+                observer: options.observeSemanticEvidence,
+              });
+            }
+          }
           const evidenceProducts = filterProductsByFeatureEvidence(result.products, featureRequirements);
           const products = rankCatalogProducts(evidenceProducts, {
             query: intent.query,

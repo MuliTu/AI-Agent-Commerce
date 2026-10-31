@@ -167,7 +167,7 @@ This log records current decisions and proposals. “Accepted” means accepted 
 
 **Context:** Conservative lexical evidence may miss valid paraphrases. The repository already supports hosted OpenAI and a local LiteLLM-compatible Qwen/Ollama route.
 
-**Proposed decision:** On a separate local branch, evaluate a model-assisted evidence stage after deterministic hard filtering. The structured output must distinguish `supported`, `contradicted`, and `unknown`, include confidence, product ID, and exact trusted catalog evidence. Initially run it in shadow mode so baseline user-visible results do not change.
+**Experimental decision:** On the local-only `local/semantic-evidence-shadow` branch, implement a model-assisted evidence stage after deterministic hard filtering. The structured output distinguishes `supported`, `contradicted`, and `unknown`, includes confidence, product ID, requirement, and exact trusted catalog evidence. It runs in shadow mode so baseline user-visible results do not change.
 
 **Why:** Shadow mode provides disagreement data and latency/reliability evidence without weakening the verified product boundary before submission.
 
@@ -179,6 +179,8 @@ This log records current decisions and proposals. “Accepted” means accepted 
 4. Enable the judge immediately in production results. Rejected until labelled evaluation demonstrates precision and exact-evidence validation.
 
 **Risks and gates:** Exact evidence spans must be verified against trusted fields; confidence is not proof; provider failure falls back to the lexical baseline; unknown fails closed for hard requirements. Local LiteLLM reduces external cost but may have weaker schema reliability and hardware-dependent latency. Hosted OpenAI may be more reliable but adds network latency and usage cost.
+
+**Why this branch is separate:** The committed baseline already has independently verified fail-closed behavior. Keeping the semantic judge local and observational lets us measure schema reliability, evidence accuracy, latency, and disagreement without placing the assignment submission or current shopper behavior at risk.
 
 ## Decisions still requiring evidence or confirmation
 

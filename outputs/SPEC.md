@@ -278,3 +278,15 @@ A price-picker component is discussion-only and is not part of this implementati
 ## 16. Live-provider QA remediation
 
 The confirmed scenarios in `QA_LIVE_AI_REPORT_2026-10-30.md` are release regressions. Acceptance requires deterministic coverage for each invariant and a separate opt-in live-provider replay. Provider-plan observability is bounded to structural summaries and must not persist credentials, authorization data, raw provider responses or catalog payloads.
+
+## 17. Local semantic-evidence shadow experiment
+
+This section applies only to `local/semantic-evidence-shadow`; it is not part of the pushed submission baseline.
+
+- Deterministic category, price, stock, rating and brand filtering remains authoritative and runs before semantic evaluation.
+- The evaluator accepts a bounded requirement and bounded post-filter catalog candidates, and returns per-product `supported`, `contradicted`, or `unknown` verdicts with bounded confidence.
+- Every claimed evidence quote must be an exact substring of trusted title, description or tags and identify its source field. Any invalid, missing, duplicate or incomplete assessment invalidates the bounded batch and records a failed shadow observation; it never affects visible results.
+- Similarity, confidence and model prose never establish proof by themselves and never restore a deterministically excluded product.
+- Shadow observations are bounded and secret-free. Provider failure, malformed output or unavailable local infrastructure leaves baseline results unchanged.
+- The same OpenAI-compatible model factory supports hosted OpenAI and the existing LiteLLM/Ollama route; the experiment does not add credentials or change network/security configuration.
+- Result-changing semantic filtering or reranking requires a labelled evaluation set and separate approval.

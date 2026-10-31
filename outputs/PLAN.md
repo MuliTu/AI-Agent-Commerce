@@ -185,6 +185,8 @@ Execute the five bounded tasks in `QA_REMEDIATION_TASKS_2026-10-30.md`, integrat
 
 ## Local semantic-evidence experiment (separate branch, not submission baseline)
 
+**Status (October 31):** Active on local-only branch `local/semantic-evidence-shadow`, based on verified baseline commit `828f4e8`. The branch must not be pushed or enabled in the running baseline without a separate decision.
+
 1. Add a provider-neutral semantic evaluator interface and strict structured result schema: product ID, requirement, `supported | contradicted | unknown`, confidence, and exact catalog evidence.
 2. Insert the experiment after deterministic hard filtering and before final soft ranking. Never let the evaluator restore a product removed by price, stock, rating, category, or brand constraints.
 3. Run in shadow mode by default: record bounded diagnostics and disagreements while keeping baseline user-visible results unchanged.
@@ -193,3 +195,10 @@ Execute the five bounded tasks in `QA_REMEDIATION_TASKS_2026-10-30.md`, integrat
 6. Add deterministic evaluator fixtures for supported, contradicted, unknown, malformed output, provider failure, synonym ambiguity, and multi-intent isolation.
 7. If the local model is already reachable, run a bounded smoke evaluation and record the exact model/endpoint label without exposing credentials. Otherwise report the connection blocker and keep offline tests green.
 8. Compare precision-first hard-evidence behavior separately from soft reranking quality. Do not enable result-changing semantic decisions without labelled evaluation and explicit approval.
+
+### Experiment exit criteria
+
+- Offline tests prove schema validation, exact-quote validation, provider-failure fallback, multi-intent isolation, and unchanged baseline results.
+- The evaluator observes only bounded post-filter candidates and cannot restore a product removed by deterministic constraints.
+- Any local LiteLLM/Ollama smoke run reports availability and behavior without changing credentials or persistent configuration.
+- A local commit records the experiment; no remote branch, merge, deployment, or user-visible enablement occurs.
