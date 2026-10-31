@@ -77,6 +77,8 @@ The intent model decides what to search for; it does not author products. DummyJ
 
 The first independent 15-case live A/B run found that silent fallback, narrow strict wording, contextual negation, category synonyms, and a 12-product evaluator cap could undermine that contract. The remediation keeps strict requests fail-closed, labels only evaluated products, discloses fallback, derives global copy from actual card tiers, and uses narrow literal-evidence consistency so direct terms such as `slim` cannot be rejected while related terms such as `satellite SOS` still do not prove satellite calling.
 
+The second live retest isolated one remaining strict failure: the evidence extractor passed an expanded planner query instead of the literal adjective in “documented slim laptops.” The experiment now extracts that adjective directly, can combine exact whole-token evidence from multiple trusted fields, and handles the reviewed daytime-fresh negative preference only when both unwanted terms are literally established. Whole-token matching prevents substrings such as `red` inside `Predator` from becoming false proof.
+
 Two alternatives were rejected for this assignment:
 
 1. **A multi-agent planner/searcher/writer pipeline.** It adds handoff state, latency, failure modes, and inconsistent context without improving the small catalog task. One structured plan plus deterministic per-intent work is easier to inspect and test.

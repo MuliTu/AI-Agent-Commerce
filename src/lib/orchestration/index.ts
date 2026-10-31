@@ -30,6 +30,7 @@ export {
   validateSemanticEvidenceBatch,
   runSemanticEvidenceEvaluation,
   applySemanticEvidenceRanking,
+  negativePreferenceTerms,
   semanticEvidenceCandidateLimit,
   requiresOnlyVerifiedEvidence,
   type SemanticEvidenceAssessment,

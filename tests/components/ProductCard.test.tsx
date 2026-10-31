@@ -35,4 +35,20 @@ describe('ProductCard semantic relevance', () => {
     if (tier === 'unknown') expect(markup).toContain('No direct catalog-text proof');
     else expect(markup).toContain('satellite SOS messaging');
   });
+
+  it('renders every trusted span used for a cross-field verified match', () => {
+    const markup = renderToStaticMarkup(<ProductCard
+      product={product}
+      matchReasons={[]}
+      semanticRelevance={{
+        tier: 'supported', score: 0.98, confidence: 0.9,
+        evidence: [
+          { field: 'title', quote: 'Satellite Phone' },
+          { field: 'description', quote: 'satellite SOS messaging' },
+        ],
+      }}
+    />);
+    expect(markup).toContain('Satellite Phone');
+    expect(markup).toContain('satellite SOS messaging');
+  });
 });

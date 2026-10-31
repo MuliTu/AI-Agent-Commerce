@@ -189,6 +189,12 @@ This log records current decisions and proposals. “Accepted” means accepted 
 
 **Alternative considered:** Trust the model’s tier exactly. Rejected after the live run labeled Huawei’s literal slim description as partial and strict mode removed the correct product. The deterministic promotion is intentionally narrow and quote-bound, not a general semantic override.
 
+**Second-retest refinement:** Q08 showed that the narrow promotion was not reached with the right requirement: the planner query carried category, budget and “no guessing” language. Strict adjective-before-category wording is now extracted deterministically (`documented slim laptops` → `slim`). Q10 showed that exact evidence can be distributed across fields, so direct support may combine validated title/description/tag spans rather than requiring every term in one field.
+
+**Negative preference decision:** Scope deterministic negative preference handling to the reviewed “not a daytime freshie/fresh fragrance” wording, and exclude a product only when both normalized unwanted terms are directly present in trusted catalog text (`everyday` + `fresh`). This fixes CK One without pretending the application supports arbitrary `not a/an …` filters. The broader alternatives—parsing every free-form negation or inferring antonyms—were rejected as too speculative.
+
+**Token-boundary decision:** Literal promotion and negative matching use normalized whole-token/phrase boundaries, not raw substring inclusion. Otherwise a term such as `red` could be falsely “proven” by a title such as `Predator Black`. Cross-field evidence remains allowed only when every complete requested token is present in trusted fields.
+
 **Why this branch is separate:** The committed baseline already has independently verified fail-closed behavior. The visible reranker needs labelled live QA before it can be considered for the submission or production path.
 
 ## Decisions still requiring evidence or confirmation

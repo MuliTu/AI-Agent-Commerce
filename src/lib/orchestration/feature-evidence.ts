@@ -61,6 +61,15 @@ function genericExplicitRequirements(prompt: string): FeatureEvidenceRequirement
   }));
 }
 
+function strictAdjectiveRequirements(prompt: string): FeatureEvidenceRequirement[] {
+  const productNoun = String.raw`(?:phones?|smartphones?|laptops?|shoes?|fragrances?|perfumes?|products?)`;
+  const pattern = new RegExp(String.raw`\b(?:only\s+)?(?:verified|documented|confirmed)\s+([^,.!?;]{2,50}?)\s+${productNoun}\b`, 'giu');
+  return [...prompt.matchAll(pattern)].flatMap((match) => {
+    const phrase = cleanFeaturePhrase(match[1] ?? '');
+    return phrase ? [{ label: phrase, alternatives: [phrase] }] : [];
+  });
+}
+
 /**
  * Returns only requirements the shopper clearly asks the catalog to establish.
  * The vocabulary is deliberately bounded: an unknown adjective remains ranking
@@ -88,7 +97,9 @@ export function requestedFeatureEvidence(prompt: string): FeatureEvidenceRequire
       const normalizedCandidate = normalize(candidate);
       return curatedTerms.some((term) => term.includes(normalizedCandidate) || normalizedCandidate.includes(term));
     }));
-  return [...curated, ...generic];
+  const strict = strictAdjectiveRequirements(prompt);
+  const byLabel = new Map([...curated, ...strict, ...generic].map((requirement) => [requirement.label, requirement]));
+  return [...byLabel.values()];
 }
 
 export function requestedFeatureEvidenceForIntent(input: {

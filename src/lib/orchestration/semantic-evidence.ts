@@ -61,11 +61,16 @@ function normalize(value: string): string {
   return value.normalize('NFKD').toLocaleLowerCase('en-US').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
 
+function containsNormalizedPhrase(haystack: string, needle: string): boolean {
+  return needle.length > 0 && ` ${haystack} `.includes(` ${needle} `);
+}
+
 const NON_FEATURE_TOKENS = new Set([
   'a', 'an', 'the', 'only', 'show', 'find', 'me', 'please', 'with', 'whose', 'that', 'actually',
   'verified', 'documented', 'confirmed', 'confirms', 'catalog', 'listing', 'product', 'products',
   'phone', 'phones', 'smartphone', 'smartphones', 'laptop', 'laptops', 'fragrance', 'fragrances',
   'shoe', 'shoes', 'makeup', 'under', 'below', 'over', 'usd', 'dollars', 'dollar', 'and', 'or',
+  'i', 'want', 'in', 'stock', 'are', 'is', 'no', 'guessing', 'guess', 'from', 'photo', 'for', 'to',
 ]);
 
 function meaningfulTokens(requirement: FeatureEvidenceRequirement): string[] {
@@ -76,7 +81,7 @@ function meaningfulTokens(requirement: FeatureEvidenceRequirement): string[] {
 function directCatalogEvidence(
   product: Product,
   requirement: FeatureEvidenceRequirement,
-): { field: 'title' | 'description' | 'tags'; quote: string } | undefined {
+): Array<{ field: 'title' | 'description' | 'tags'; quote: string }> | undefined {
   const fields = [
     { field: 'title' as const, values: [product.title] },
     { field: 'description' as const, values: [product.description] },
@@ -87,12 +92,31 @@ function directCatalogEvidence(
   for (const { field, values } of fields) {
     for (const value of values) {
       const normalizedValue = normalize(value);
-      const alternativeMatch = alternatives.some((alternative) => normalizedValue.includes(alternative));
-      const tokenMatch = requiredTokens.length > 0 && requiredTokens.every((token) => normalizedValue.includes(token));
-      if (alternativeMatch || tokenMatch) return { field, quote: value.slice(0, 500) };
+      const alternativeMatch = alternatives.some((alternative) => containsNormalizedPhrase(normalizedValue, alternative));
+      if (alternativeMatch) return [{ field, quote: value.slice(0, 500) }];
     }
   }
+  const searchable = normalize(fields.flatMap(({ values }) => values).join(' '));
+  if (requiredTokens.length > 0 && requiredTokens.every((token) => containsNormalizedPhrase(searchable, token))) {
+    return fields.flatMap(({ field, values }) => values.flatMap((value) => {
+      const normalizedValue = normalize(value);
+      return requiredTokens.some((token) => containsNormalizedPhrase(normalizedValue, token))
+        ? [{ field, quote: value.slice(0, 500) }]
+        : [];
+    })).slice(0, 4);
+  }
   return undefined;
+}
+
+export function negativePreferenceTerms(prompt: string): string[] {
+  const match = prompt.match(/\bnot\s+(?:a|an)\s+daytime\s+(?:freshie|fresh(?:\s+fragrance)?)\b/iu);
+  return match ? ['everyday', 'fresh'] : [];
+}
+
+function productMatchesNegativePreference(product: Product, terms: readonly string[]): boolean {
+  if (terms.length === 0) return false;
+  const searchable = normalize([product.title, product.description, ...product.tags].join(' '));
+  return terms.every((term) => containsNormalizedPhrase(searchable, normalize(term)));
 }
 
 /**
@@ -127,7 +151,7 @@ export function validateSemanticEvidenceBatch(
       normalizedAssessments.push({
         ...assessment,
         verdict: 'supported',
-        evidence: [directEvidence],
+        evidence: directEvidence,
       });
       continue;
     }
@@ -155,6 +179,7 @@ export function applySemanticEvidenceRanking<T extends { product: Product; score
   ranked: T[];
   assessments: SemanticEvidenceAssessment[];
   onlyVerified: boolean;
+  negativeTerms?: string[];
 }): Array<T & { semanticRelevance: SemanticProductRelevance }> {
   const byProduct = new Map<number, SemanticEvidenceAssessment[]>();
   for (const assessment of input.assessments) {
@@ -163,6 +188,7 @@ export function applySemanticEvidenceRanking<T extends { product: Product; score
     byProduct.set(assessment.productId, current);
   }
   return input.ranked.flatMap((ranked) => {
+    if (productMatchesNegativePreference(ranked.product, input.negativeTerms ?? [])) return [];
     const assessments = byProduct.get(ranked.product.id) ?? [];
     if (assessments.length === 0 || assessments.some(({ verdict }) => verdict === 'contradicted')) return [];
     const tier: SemanticProductRelevance['tier'] = assessments.every(({ verdict }) => verdict === 'supported')

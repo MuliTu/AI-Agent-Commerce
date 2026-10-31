@@ -3,6 +3,7 @@ import type { Product } from '../../src/lib/domain/contracts';
 import {
   applySemanticEvidenceRanking,
   createIntentOrchestrator,
+  negativePreferenceTerms,
   requiresOnlyVerifiedEvidence,
   runSemanticEvidenceEvaluation,
   semanticEvidenceCandidateLimit,
@@ -350,10 +351,19 @@ describe('semantic evidence relevance evaluation', () => {
       ...phone, id: 78, title: 'Huawei Matebook X Pro', category: 'laptops', price: 1399.99,
       description: 'The Huawei Matebook X Pro is a slim and stylish laptop for professionals.', tags: ['laptops'],
     };
+    const expensiveSlimLaptop: Product = {
+      ...huawei, id: 79, title: 'Premium Slim Workstation', price: 1800,
+    };
+    const affordableThickLaptop: Product = {
+      ...huawei, id: 80, title: 'Budget Workstation', price: 900,
+      description: 'A powerful desktop-replacement laptop for professionals.',
+    };
     const result = await createIntentOrchestrator({
       catalog: {
         searchProducts: vi.fn(),
-        listProductsByCategory: vi.fn(async () => ({ products: [huawei], total: 1, skip: 0, limit: 100 })),
+        listProductsByCategory: vi.fn(async () => ({
+          products: [huawei, expensiveSlimLaptop, affordableThickLaptop], total: 3, skip: 0, limit: 100,
+        })),
         getProduct: vi.fn(),
         listCategories: vi.fn(async () => [{ slug: 'laptops', name: 'Laptops', url: 'catalog' }]),
       },
@@ -376,6 +386,108 @@ describe('semantic evidence relevance evaluation', () => {
     expect(result.outcomes[0].products[0]).toMatchObject({
       product: { id: 78 }, semanticRelevance: { tier: 'supported' },
     });
+  });
+
+  it('combines exact title and description evidence for the red-black basketball shoe', () => {
+    const jordan: Product = {
+      ...phone, id: 108, title: 'Nike Air Jordan 1 Red And Black', category: 'mens-shoes',
+      description: 'Classic high-top basketball shoes.', tags: ['mens-shoes', 'basketball'], stock: 7,
+    };
+    const result = validateSemanticEvidenceBatch({
+      assessments: [{
+        productId: 108,
+        requirement: 'red and black basketball shoes in stock',
+        verdict: 'partial',
+        confidence: 0.9,
+        relevanceScore: 0.98,
+        evidence: [{ field: 'title', quote: 'Red And Black' }, { field: 'description', quote: 'basketball shoes' }],
+      }],
+    }, { products: [jordan], requirements: [{ label: 'red and black basketball shoes in stock', alternatives: [] }] });
+
+    expect(result.assessments[0].verdict).toBe('supported');
+    expect(result.assessments[0].evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: 'title', quote: expect.stringContaining('Red And Black') }),
+      expect.objectContaining({ field: 'description', quote: expect.stringContaining('basketball') }),
+    ]));
+
+    const predator: Product = {
+      ...jordan, id: 109, title: 'Predator Black', description: 'Black basketball shoes.',
+    };
+    const falsePositive = validateSemanticEvidenceBatch({
+      assessments: [{
+        productId: 109, requirement: 'red and black basketball shoes in stock', verdict: 'partial',
+        confidence: 0.8, relevanceScore: 0.7, evidence: [{ field: 'description', quote: 'basketball shoes' }],
+      }],
+    }, { products: [predator], requirements: [{ label: 'red and black basketball shoes in stock', alternatives: [] }] });
+    expect(falsePositive.assessments[0].verdict).toBe('partial');
+  });
+
+  it('removes out-of-stock shoes before semantic evidence evaluation', async () => {
+    const jordan: Product = {
+      ...phone, id: 108, title: 'Nike Air Jordan 1 Red And Black', category: 'mens-shoes',
+      description: 'Classic high-top basketball shoes.', tags: ['mens-shoes', 'basketball'], stock: 7,
+    };
+    const soldOut = { ...jordan, id: 109, stock: 0 };
+    const evaluator = vi.fn(async ({ products, requirements: scopedRequirements }: SemanticEvidenceInput) => ({
+      assessments: products.flatMap((product) => scopedRequirements.map((requirement) => ({
+        productId: product.id, requirement: requirement.label, verdict: 'partial' as const,
+        confidence: 0.9, relevanceScore: 0.95, evidence: [{ field: 'title' as const, quote: 'Red And Black' }],
+      }))),
+    }));
+    const result = await createIntentOrchestrator({
+      catalog: {
+        searchProducts: vi.fn(),
+        listProductsByCategory: vi.fn(async () => ({ products: [jordan, soldOut], total: 2, skip: 0, limit: 100 })),
+        getProduct: vi.fn(),
+        listCategories: vi.fn(async () => [{ slug: 'mens-shoes', name: 'Mens Shoes', url: 'catalog' }]),
+      },
+      extractIntents: async () => ({
+        response: 'searching',
+        intents: [{
+          goal: 'Red and black basketball shoes in stock', query: 'red and black basketball shoes',
+          constraints: { category: 'mens-shoes', inStock: true },
+        }],
+      }),
+      semanticEvidenceEvaluator: evaluator,
+    }).run({ turnId: 'in-stock-jordan', conversationId: 'qa', prompt: 'Red and black basketball shoes in stock.' });
+
+    expect(evaluator).toHaveBeenCalledWith(expect.objectContaining({ products: [expect.objectContaining({ id: 108 })] }));
+    expect(result.outcomes[0].products.map(({ product }) => product.id)).toEqual([108]);
+  });
+
+  it('excludes a directly evidenced unwanted daytime-fresh profile without creating a general negative filter', () => {
+    const chanel: Product = {
+      ...phone, id: 40, title: 'Chanel Coco Noir', category: 'fragrances',
+      description: 'Perfect for evening occasions', tags: ['fragrance'],
+    };
+    const ckOne: Product = {
+      ...phone, id: 41, title: 'CK One', category: 'fragrances',
+      description: 'A fresh and clean fragrance for everyday wear', tags: ['fragrance'],
+    };
+    const terms = negativePreferenceTerms('A perfume after sunset — not a daytime freshie.');
+    const ranked = applySemanticEvidenceRanking({
+      ranked: [
+        { product: chanel, score: 0.8, matchReasons: [] },
+        { product: ckOne, score: 0.9, matchReasons: [] },
+      ],
+      assessments: [
+        { productId: 40, requirement: 'evening perfume', verdict: 'supported', confidence: 0.9, relevanceScore: 0.95, evidence: [{ field: 'description', quote: 'evening occasions' }] },
+        { productId: 41, requirement: 'evening perfume', verdict: 'partial', confidence: 0.8, relevanceScore: 0.78, evidence: [{ field: 'description', quote: 'everyday wear' }] },
+      ],
+      onlyVerified: false,
+      negativeTerms: terms,
+    });
+
+    expect(terms).toEqual(['everyday', 'fresh']);
+    expect(ranked.map(({ product }) => product.id)).toEqual([40]);
+    expect(negativePreferenceTerms('not just a phone with a camera')).toEqual([]);
+    expect(negativePreferenceTerms('not a leather case')).toEqual([]);
+    expect(applySemanticEvidenceRanking({
+      ranked: [{ product: { ...ckOne, id: 42, description: 'A fresh fragrance for evening wear' }, score: 0.7, matchReasons: [] }],
+      assessments: [{ productId: 42, requirement: 'evening perfume', verdict: 'partial', confidence: 0.7, relevanceScore: 0.7, evidence: [{ field: 'description', quote: 'evening wear' }] }],
+      onlyVerified: false,
+      negativeTerms: terms,
+    })).toHaveLength(1);
   });
 
   it('recognizes explicit verified-only wording without making ordinary relevance strict', () => {

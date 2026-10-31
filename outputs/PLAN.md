@@ -207,6 +207,14 @@ Execute the five bounded tasks in `QA_REMEDIATION_TASKS_2026-10-30.md`, integrat
 6. Fix upstream contextual-negation and category-synonym failures that prevent retrieval before reranking.
 7. Replay the same failed live cases independently and compare latency, tiers, evidence, ordering and fallback with the first A/B report.
 
+### Second live retest closure
+
+1. Extract strict adjective-before-category requirements before semantic evaluation so Q08 uses `slim`, not a planner-expanded sentence.
+2. Permit deterministic direct support to combine exact spans across title, description and tags, covering Q10's color title plus basketball description without weakening hard constraints.
+3. Add a bounded negative-preference evidence rule for Q11's reviewed daytime-fresh wording: both normalized unwanted terms must appear as complete tokens in trusted text before a product is excluded; unrelated free-form negation remains model-assessed rather than becoming a new hard filter.
+4. Match deterministic evidence at normalized token/phrase boundaries and test substring traps, over-budget slim distractors, and out-of-stock exact shoes.
+5. Keep related-only satellite evidence partial, preserve strict fail-closed behavior, and rerun Q08 plus Q10/Q11 controls independently.
+
 ### Experiment exit criteria
 
 - Offline tests prove schema validation, exact-quote validation, provider-failure fallback, multi-intent isolation, tier ordering, strict-only filtering, and visible labels.

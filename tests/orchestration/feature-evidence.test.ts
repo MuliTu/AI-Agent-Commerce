@@ -92,6 +92,12 @@ describe('catalog feature evidence', () => {
     expect(requirements[0].label).toContain('high resolution display');
   });
 
+  it('extracts the adjective from strict documented category wording', () => {
+    expect(requestedFeatureEvidence(
+      'Only documented slim laptops under $1,500, please — no guessing from the photo.',
+    )).toContainEqual({ label: 'slim', alternatives: ['slim'] });
+  });
+
   it('scopes a separate explicit proof clause back to the matching multi-intent segment', () => {
     const prompt = 'Find a phone with satellite calling and a fragrance. If the catalog does not mention satellite calling, return no phone products.';
     expect(requestedFeatureEvidenceForIntent({

@@ -22,6 +22,7 @@ import { coalesceAlternativeProductDrafts, decideFollowUpTargets, inspectPlanCat
 import { classifyIntentRequest } from './request-classification';
 import {
   applySemanticEvidenceRanking,
+  negativePreferenceTerms,
   semanticEvidenceCandidateLimit,
   requiresOnlyVerifiedEvidence,
   runSemanticEvidenceEvaluation,
@@ -713,6 +714,7 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
                 ranked: semanticCandidates,
                 assessments: report.assessments,
                 onlyVerified,
+                negativeTerms: negativePreferenceTerms(promptResult.data),
               });
               const products = ranked;
               if (products.length === 0) {
