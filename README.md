@@ -61,12 +61,12 @@ flowchart TD
   U[Shopper message] --> P[Intent model: structured product goals]
   P --> R[DummyJSON retrieval per intent]
   R --> H[Deterministic hard filters: category, price, stock, rating, brand]
-  H --> E[OpenAI evidence and relevance batch]
+  H --> E[OpenAI evidence and relevance batch for every displayed candidate]
   E --> V[Validate schema and exact catalog quotes]
   V -->|valid| T[Evidence tiers: supported / partial / unknown; contradicted removed]
   T --> S[Sort: tier, semantic relevance score, lexical tie-break]
   S --> D[Typed product cards with verified / related / unknown labels]
-  V -->|timeout, provider error, or invalid evidence| F[Deterministic lexical/evidence fallback]
+  V -->|timeout, provider error, or malformed batch| F[Disclosed deterministic lexical/evidence fallback]
   F --> D
   U -->|explicit only verified| X[Strict supported-only gate]
   T --> X
@@ -74,6 +74,8 @@ flowchart TD
 ```
 
 The intent model decides what to search for; it does not author products. DummyJSON remains the product source. The second model evaluates only retrieved catalog text and cannot bypass hard filters. Its score influences order only within an evidence tier, while exact evidence determines whether a product may be called verified.
+
+The first independent 15-case live A/B run found that silent fallback, narrow strict wording, contextual negation, category synonyms, and a 12-product evaluator cap could undermine that contract. The remediation keeps strict requests fail-closed, labels only evaluated products, discloses fallback, derives global copy from actual card tiers, and uses narrow literal-evidence consistency so direct terms such as `slim` cannot be rejected while related terms such as `satellite SOS` still do not prove satellite calling.
 
 Two alternatives were rejected for this assignment:
 

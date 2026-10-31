@@ -37,15 +37,15 @@ describe('semantic evidence relevance evaluation', () => {
         evidence: [{ field: 'description', quote: '50 MP camera' }],
       }],
     }, { products: [phone], requirements })).toMatchObject({
-      assessments: [{ verdict: 'supported', evidence: [{ quote: '50 MP camera' }] }],
+      assessments: [{ verdict: 'supported', evidence: [expect.objectContaining({ quote: expect.stringContaining('Camera') })] }],
     });
   });
 
   it.each([
     ['invented quote', { field: 'description', quote: 'optical zoom' }],
     ['wrong field', { field: 'title', quote: '50 MP camera' }],
-  ])('rejects %s even when the verdict says supported', (_name, evidence) => {
-    expect(() => validateSemanticEvidenceBatch({
+  ])('replaces %s with deterministic direct catalog evidence', (_name, evidence) => {
+    expect(validateSemanticEvidenceBatch({
       assessments: [{
         productId: 1,
         requirement: 'camera capabilities',
@@ -54,11 +54,13 @@ describe('semantic evidence relevance evaluation', () => {
         relevanceScore: 0.9,
         evidence: [evidence],
       }],
-    }, { products: [phone], requirements })).toThrow(/trusted catalog fields/);
+    }, { products: [phone], requirements })).toMatchObject({
+      assessments: [{ verdict: 'supported', evidence: [expect.objectContaining({ quote: expect.stringContaining('Camera') })] }],
+    });
   });
 
-  it('rejects supported verdicts without evidence and incomplete batches', () => {
-    expect(() => validateSemanticEvidenceBatch({
+  it('repairs direct supported evidence, downgrades inconsistent contradictions, and rejects incomplete batches', () => {
+    expect(validateSemanticEvidenceBatch({
       assessments: [{
         productId: 1,
         requirement: 'camera capabilities',
@@ -67,8 +69,10 @@ describe('semantic evidence relevance evaluation', () => {
         relevanceScore: 0.8,
         evidence: [],
       }],
-    }, { products: [phone], requirements })).toThrow(/requires an exact catalog quote/);
-    expect(() => validateSemanticEvidenceBatch({
+    }, { products: [phone], requirements })).toMatchObject({
+      assessments: [{ verdict: 'supported', evidence: [expect.any(Object)] }],
+    });
+    expect(validateSemanticEvidenceBatch({
       assessments: [{
         productId: 1,
         requirement: 'camera capabilities',
@@ -77,11 +81,13 @@ describe('semantic evidence relevance evaluation', () => {
         relevanceScore: 0.1,
         evidence: [],
       }],
-    }, { products: [phone], requirements })).toThrow(/requires an exact catalog quote/);
+    }, { products: [phone], requirements })).toMatchObject({
+      assessments: [{ verdict: 'unknown', evidence: [] }],
+    });
     expect(() => validateSemanticEvidenceBatch({ assessments: [] }, {
       products: [phone], requirements,
     })).toThrow(/incomplete/);
-    expect(() => validateSemanticEvidenceBatch({
+    expect(validateSemanticEvidenceBatch({
       assessments: [{
         productId: 1,
         requirement: 'camera capabilities',
@@ -90,7 +96,9 @@ describe('semantic evidence relevance evaluation', () => {
         relevanceScore: 0.5,
         evidence: [{ field: 'description', quote: 'camera' }],
       }],
-    }, { products: [phone], requirements })).toThrow(/unknown.*cannot claim catalog evidence/i);
+    }, { products: [phone], requirements })).toMatchObject({
+      assessments: [{ verdict: 'supported', evidence: [expect.any(Object)] }],
+    });
   });
 
   it('rejects relevance and confidence scores outside their bounded range', () => {
@@ -317,6 +325,59 @@ describe('semantic evidence relevance evaluation', () => {
       .map(({ product }) => product.id)).toEqual([3, 2, 1]);
   });
 
+  it('promotes literal slim evidence but does not confuse satellite SOS with satellite calling', () => {
+    const huawei: Product = {
+      ...phone, id: 21, title: 'Huawei Matebook X Pro', category: 'laptops', price: 1399.99,
+      description: 'A slim and stylish laptop for professionals', tags: ['laptops'],
+    };
+    const sos: Product = {
+      ...phone, id: 22, title: 'Emergency Phone', description: 'Supports emergency satellite SOS messaging',
+    };
+    const slimResult = validateSemanticEvidenceBatch({
+      assessments: [{ productId: 21, requirement: 'slim laptops', verdict: 'partial', confidence: 0.8, relevanceScore: 0.9, evidence: [{ field: 'description', quote: 'slim and stylish' }] }],
+    }, { products: [huawei], requirements: [{ label: 'slim laptops', alternatives: [] }] });
+    const satelliteResult = validateSemanticEvidenceBatch({
+      assessments: [{ productId: 22, requirement: 'satellite calling', verdict: 'partial', confidence: 0.9, relevanceScore: 0.8, evidence: [{ field: 'description', quote: 'satellite SOS messaging' }] }],
+    }, { products: [sos], requirements: [{ label: 'satellite calling', alternatives: [] }] });
+
+    expect(slimResult.assessments[0].verdict).toBe('supported');
+    expect(slimResult.assessments[0].evidence[0]).toMatchObject({ field: 'description', quote: expect.stringContaining('slim') });
+    expect(satelliteResult.assessments[0].verdict).toBe('partial');
+  });
+
+  it('keeps the real-shaped Huawei slim laptop in strict verified-only mode', async () => {
+    const huawei: Product = {
+      ...phone, id: 78, title: 'Huawei Matebook X Pro', category: 'laptops', price: 1399.99,
+      description: 'The Huawei Matebook X Pro is a slim and stylish laptop for professionals.', tags: ['laptops'],
+    };
+    const result = await createIntentOrchestrator({
+      catalog: {
+        searchProducts: vi.fn(),
+        listProductsByCategory: vi.fn(async () => ({ products: [huawei], total: 1, skip: 0, limit: 100 })),
+        getProduct: vi.fn(),
+        listCategories: vi.fn(async () => [{ slug: 'laptops', name: 'Laptops', url: 'catalog' }]),
+      },
+      extractIntents: async () => ({
+        response: 'searching',
+        intents: [{ goal: 'Documented slim laptop', query: 'slim laptops', constraints: { category: 'laptops', maxPrice: 1500 } }],
+      }),
+      semanticEvidenceEvaluator: async ({ products, requirements: scopedRequirements }) => ({
+        assessments: products.flatMap((product) => scopedRequirements.map((requirement) => ({
+          productId: product.id, requirement: requirement.label, verdict: 'partial', confidence: 0.8,
+          relevanceScore: 0.9, evidence: [{ field: 'description', quote: 'slim and stylish' }],
+        }))),
+      }),
+    }).run({
+      turnId: 'strict-slim', conversationId: 'qa',
+      prompt: 'Only documented slim laptops under $1,500, please — no guessing from the photo.',
+    });
+
+    expect(result.outcomes[0].products).toHaveLength(1);
+    expect(result.outcomes[0].products[0]).toMatchObject({
+      product: { id: 78 }, semanticRelevance: { tier: 'supported' },
+    });
+  });
+
   it('recognizes explicit verified-only wording without making ordinary relevance strict', () => {
     expect(requiresOnlyVerifiedEvidence('Only show verified satellite calling phones.')).toBe(true);
     expect(requiresOnlyVerifiedEvidence('If the catalog does not mention satellite calling, return no products.')).toBe(true);
@@ -324,7 +385,7 @@ describe('semantic evidence relevance evaluation', () => {
   });
 
   it('keeps the structured batch within capacity for multiple requirements', () => {
-    expect(semanticEvidenceCandidateLimit(1)).toBe(12);
+    expect(semanticEvidenceCandidateLimit(1)).toBe(30);
     expect(semanticEvidenceCandidateLimit(4)).toBe(10);
     expect(semanticEvidenceCandidateLimit(40)).toBe(1);
     expect(semanticEvidenceCandidateLimit(41)).toBe(0);
@@ -376,8 +437,9 @@ describe('semantic evidence relevance evaluation', () => {
       prompt: 'Only documented lightweight smartphones, please.',
     });
     expect(invalidResult.outcomes[0]).toMatchObject({
-      products: [], error: { code: 'catalog_evidence_unavailable' },
+      products: [], semanticStatus: 'fallback', error: { code: 'catalog_evidence_unavailable' },
     });
+    expect(invalidResult.response).toContain('Semantic verification was unavailable');
   });
 
   it('shows partial alternatives normally but removes them for an explicit verified-only request', async () => {
@@ -426,5 +488,102 @@ describe('semantic evidence relevance evaluation', () => {
     expect(normal.outcomes[0].products.map(({ semanticRelevance }) => semanticRelevance?.tier))
       .toEqual(['supported', 'partial']);
     expect(strict.outcomes[0].products.map(({ product }) => product.id)).toEqual([11]);
+  });
+
+  it('evaluates every displayed candidate instead of appending false unknown-zero overflow', async () => {
+    const phones = Array.from({ length: 16 }, (_, index): Product => ({
+      ...phone, id: index + 100, title: `Camera Phone ${index + 1}`,
+      description: index === 15 ? 'A versatile camera system' : `Camera technology option ${index + 1}`,
+    }));
+    const semanticEvidenceEvaluator = vi.fn(async ({ products, requirements: scopedRequirements }: SemanticEvidenceInput) => ({
+      assessments: products.flatMap((product) => scopedRequirements.map((requirement) => ({
+        productId: product.id, requirement: requirement.label, verdict: 'supported', confidence: 0.8,
+        relevanceScore: product.id === 115 ? 0.95 : 0.7,
+        evidence: [{ field: 'description', quote: product.description }],
+      }))),
+    }));
+    const result = await createIntentOrchestrator({
+      catalog: {
+        searchProducts: vi.fn(),
+        listProductsByCategory: vi.fn(async () => ({ products: phones, total: 16, skip: 0, limit: 100 })),
+        getProduct: vi.fn(),
+        listCategories: vi.fn(async () => [{ slug: 'smartphones', name: 'Smartphones', url: 'catalog' }]),
+      },
+      extractIntents: async () => ({
+        response: 'searching',
+        intents: [{ goal: 'Camera phone', query: 'camera phone', constraints: { category: 'smartphones' } }],
+      }),
+      semanticEvidenceEvaluator,
+    }).run({ turnId: 'all-candidates', conversationId: 'qa', prompt: 'A pocket camera that is also a phone.' });
+
+    expect(semanticEvidenceEvaluator.mock.calls[0]?.[0].products).toHaveLength(16);
+    expect(result.outcomes[0].products).toHaveLength(16);
+    expect(result.outcomes[0].products[0].product.id).toBe(115);
+    expect(result.outcomes[0].products.every(({ semanticRelevance }) => semanticRelevance?.score !== 0)).toBe(true);
+  });
+
+  it('discloses invalid-assessment fallback and does not claim semantic ordering', async () => {
+    const result = await createIntentOrchestrator({
+      catalog: {
+        searchProducts: vi.fn(),
+        listProductsByCategory: vi.fn(async () => ({ products: [phone], total: 1, skip: 0, limit: 100 })),
+        getProduct: vi.fn(),
+        listCategories: vi.fn(async () => [{ slug: 'smartphones', name: 'Smartphones', url: 'catalog' }]),
+      },
+      extractIntents: async () => ({
+        response: 'searching', intents: [{ goal: 'Browser tabs phone', query: 'browser tabs phone', constraints: { category: 'smartphones' } }],
+      }),
+      semanticEvidenceEvaluator: async () => ({ assessments: [] }),
+    }).run({ turnId: 'fallback-visible', conversationId: 'qa', prompt: 'A phone for living in browser tabs.' });
+
+    expect(result.outcomes[0]).toMatchObject({ semanticStatus: 'fallback', products: [{ product: { id: 1 } }] });
+    expect(result.response).toContain('Semantic reranking was unavailable');
+    expect(result.response).not.toContain('evidence tier');
+  });
+
+  it('uses mixed-tier response copy when one intent contains unknown alternatives', async () => {
+    const cameraPhone: Product = { ...phone, id: 31, description: 'Advanced camera technology' };
+    const everydayFragrance: Product = {
+      ...phone, id: 32, title: 'CK One', category: 'fragrances', price: 49.99,
+      description: 'A fresh and clean fragrance for everyday wear', tags: ['fragrance'],
+    };
+    const semanticEvidenceEvaluator = vi.fn(async ({ products, requirements: scopedRequirements }: SemanticEvidenceInput) => ({
+      assessments: products.flatMap((product) => scopedRequirements.map((requirement) => ({
+        productId: product.id,
+        requirement: requirement.label,
+        verdict: product.category === 'smartphones' ? 'supported' : 'unknown',
+        confidence: 0.8,
+        relevanceScore: product.category === 'smartphones' ? 0.95 : 0.12,
+        evidence: product.category === 'smartphones' ? [{ field: 'description', quote: 'camera technology' }] : [],
+      }))),
+    }));
+    const result = await createIntentOrchestrator({
+      catalog: {
+        searchProducts: vi.fn(),
+        listProductsByCategory: vi.fn(async (category: string) => ({
+          products: category === 'smartphones' ? [cameraPhone] : [everydayFragrance], total: 1, skip: 0, limit: 100,
+        })),
+        getProduct: vi.fn(),
+        listCategories: vi.fn(async () => [
+          { slug: 'smartphones', name: 'Smartphones', url: 'catalog' },
+          { slug: 'fragrances', name: 'Fragrances', url: 'catalog' },
+        ]),
+      },
+      extractIntents: async () => ({
+        response: 'searching',
+        intents: [
+          { goal: 'Camera phone', query: 'camera phone', constraints: { category: 'smartphones' } },
+          { goal: 'Evening fragrance', query: 'evening fragrance', constraints: { category: 'fragrances', maxPrice: 80 } },
+        ],
+      }),
+      semanticEvidenceEvaluator,
+    }).run({
+      turnId: 'mixed-tier-copy', conversationId: 'qa',
+      prompt: 'Find me a camera phone and an evening fragrance under $80 — the budget is for the fragrance.',
+    });
+
+    expect(result.outcomes[1].products[0].semanticRelevance?.tier).toBe('unknown');
+    expect(result.response).toContain('Verified matches appear first; related or unverified alternatives follow');
+    expect(result.response).not.toContain('only products whose trusted catalog text');
   });
 });

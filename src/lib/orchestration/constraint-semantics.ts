@@ -31,8 +31,8 @@ function numericMatch(prompt: string, pattern: RegExp): number | undefined {
 
 function excludedBrands(prompt: string): string[] {
   const patterns = [
-    /\b(?:not(?!\s+sure\b)|except|excluding|exclude|without|anything\s+(?:but|except))\s+(?:made\s+by\s+)?([\p{L}\p{N}][\p{L}\p{N} .&'-]{0,40})/giu,
-    /(?:לא|בלי|ללא|חוץ\s+מ|מלבד)\s+(?:של\s+)?([\p{L}\p{N}][\p{L}\p{N} .&'-]{0,40})/gu,
+    /\b(?:not(?!\s+(?:sure|a\s+|an\s+)\b)|except|excluding|exclude|without(?!\s+(?:paying|spending)\b)|anything\s+(?:but|except))\s+(?:made\s+by\s+)?([\p{L}\p{N}][\p{L}\p{N} .&'-]{0,40})/giu,
+    /(?:לא(?!\s+(?:סתם|זוכר(?:ת|ים|ות)?|יודע(?:ת|ים|ות)?))|בלי|ללא|חוץ\s+מ|מלבד)\s+(?:של\s+)?([\p{L}\p{N}][\p{L}\p{N} .&'-]{0,40})/gu,
   ];
   const blockedTail = /\b(?:under|over|below|above|price|budget|expensive|cheap|in stock|with|guess|recommend|state|states|stated|list|lists|listed|mention|mentions|mentioned|omit|omits|omitted|show|shows|shown|available|sell|sells|sold|catalog)\b|(?:יקר|זול|לנחש|תנחש)/iu;
   const brands = patterns.flatMap((pattern) => [...prompt.matchAll(pattern)].flatMap((match) => {

@@ -63,4 +63,22 @@ describe('CommerceExperience result copy', () => {
     expect(markup).toContain('The search completed with every constraint you provided.');
     expect(markup).not.toContain('couldn’t search');
   });
+
+  it('discloses deterministic ordering when semantic reranking falls back', () => {
+    const result: OrchestrationResult = {
+      turnId: 'fallback', status: 'completed', response: 'Fallback.',
+      outcomes: [{
+        intent: { id: 'fallback:1', goal: 'Find a phone', query: 'phone', constraints: { category: 'smartphones' }, status: 'completed' },
+        products: [{
+          product: { id: 1, title: 'Catalog Phone', description: 'A phone', category: 'smartphones', price: 200, tags: [], images: [] },
+          score: 0.5, matchReasons: [],
+        }],
+        semanticStatus: 'fallback',
+      }],
+    };
+
+    const markup = renderToStaticMarkup(<ResultBlocks result={result} actionable pending={false} retryingIntentId="" selectedClarification="" locale="en" {...callbacks} />);
+    expect(markup).toContain('Semantic reranking was unavailable; deterministic catalog order is shown.');
+    expect(markup).not.toContain('ordered by relevance and evidence tier');
+  });
 });

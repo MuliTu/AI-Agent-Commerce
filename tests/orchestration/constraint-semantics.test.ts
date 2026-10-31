@@ -25,6 +25,16 @@ describe('constraint semantics', () => {
       .toMatchObject({ status: 'supported', budgetScope: 'single', issues: [] });
   });
 
+  it.each([
+    'I want a compact, reliable smartphone without paying flagship money.',
+    'A perfume for after sunset — not a daytime freshie.',
+    'אני רוצה טלפון לסלפי חד ומחמיא — לא סתם טלפון עם מצלמה.',
+    'איפור לריסים שצריכים דרמה ונפח — אני לא זוכרת איך קוראים למוצר.',
+  ])('does not mistake contextual negation for a brand exclusion: %s', (prompt) => {
+    expect(analyzeConstraintSemantics(prompt, categories))
+      .toMatchObject({ status: 'supported', issues: [] });
+  });
+
   it('detects unsupported minimum price and contradictory bounds', () => {
     expect(analyzeConstraintSemantics('Find a phone over $200', categories).issues)
       .toContainEqual(expect.objectContaining({ kind: 'minimum_price', minPrice: 200 }));

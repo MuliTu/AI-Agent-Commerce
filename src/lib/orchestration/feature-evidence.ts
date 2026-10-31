@@ -19,7 +19,7 @@ function normalize(value: string): string {
   return value.normalize('NFKD').toLocaleLowerCase('en-US').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
 
-const EXPLICIT_PROOF_LANGUAGE = /\b(?:verified|documented|catalog|description|details|listing|product\s+text)\b[^.?!]{0,100}\b(?:state|states|stated|mention|mentions|mentioned|list|lists|listed|show|shows|shown|describe|describes|described|say|says)\b/iu;
+const EXPLICIT_PROOF_LANGUAGE = /\b(?:verified|documented|confirmed|catalog|description|details|listing|product\s+text)\b[^.?!]{0,120}\b(?:confirm|confirms|confirmed|state|states|stated|mention|mentions|mentioned|list|lists|listed|show|shows|shown|describe|describes|described|say|says)\b/iu;
 
 function cleanFeaturePhrase(value: string): string | undefined {
   const cleaned = normalize(value)
@@ -36,7 +36,7 @@ function genericExplicitRequirements(prompt: string): FeatureEvidenceRequirement
   if (!EXPLICIT_PROOF_LANGUAGE.test(prompt)) return [];
   const candidates: string[] = [];
   const patterns = [
-    /(?:catalog|description|details|listing|product\s+text)[^.?!,;]{0,40}\b(?:does\s+not|doesn't|do\s+not|is\s+not|isn't)?\s*(?:state|mention|list|show|describe|say)s?\s+([^,.!?;]{2,80})/giu,
+    /(?:catalog|description|details|listing|product\s+text)[^.?!,;]{0,60}\b(?:does\s+not|doesn't|do\s+not|is\s+not|isn't)?\s*(?:confirm|state|mention|list|show|describe|say)s?\s+([^,.!?;]{2,80})/giu,
     /([^,.!?;]{2,70}?)\s+(?:is|are)\s+not\s+(?:stated|mentioned|listed|shown|described)\b/giu,
     /\b(?:with|having)\s+(?:verified|documented)\s+([^,.!?;]{2,70})/giu,
   ];

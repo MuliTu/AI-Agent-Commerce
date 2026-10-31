@@ -107,7 +107,12 @@ export function ResultBlocks({ result, actionable, pending, retryingIntentId, se
           : category ?? (budget !== undefined ? (isHebrew ? `מוצרים עד $${budget}` : `products under $${budget}`) : '');
         return <IntentSection key={outcome.intent.id} title={outcome.intent.goal} summary={isHebrew ? 'החיפוש הושלם וכל התנאים שסיפקת נשמרו.' : 'The search completed with every constraint you provided.'} status="empty" grouped={grouped} locale={locale}><RecommendationState state="empty" title={isHebrew ? `אין בקטלוג התאמות${filterSummary ? ` עבור ${filterSummary}` : ''}` : `No catalog products match${filterSummary ? ` ${filterSummary}` : ' these filters'}`} description={isHebrew ? 'אפשר להעלות את התקציב או לשנות תנאי אחר ואחפש שוב.' : 'Try raising the budget or relaxing another filter, and I’ll search again.'} /></IntentSection>;
       }
-      return <IntentSection key={outcome.intent.id} title={outcome.intent.goal} summary={isHebrew ? `מצאתי ${outcome.products.length} אפשרויות מהקטלוג, מדורגות לפי מידת ההתאמה ורמת הראיות.` : `I found ${outcome.products.length} catalog-backed option${outcome.products.length === 1 ? '' : 's'}, ordered by relevance and evidence tier.`} status="completed" grouped={grouped} locale={locale}><PaginatedProductResults outcome={outcome} locale={locale} /></IntentSection>;
+      const summary = outcome.semanticStatus === 'fallback'
+        ? (isHebrew ? 'הדירוג הסמנטי לא היה זמין; מוצג סדר קטלוג דטרמיניסטי.' : 'Semantic reranking was unavailable; deterministic catalog order is shown.')
+        : outcome.semanticStatus === 'applied'
+          ? (isHebrew ? `מצאתי ${outcome.products.length} אפשרויות מוערכות מהקטלוג, מסודרות קודם לפי רמת הראיות ואז לפי ציון הרלוונטיות.${outcome.semanticTruncated ? ' מוצגות רק האפשרויות שנבדקו סמנטית.' : ''}` : `I found ${outcome.products.length} evaluated catalog-backed option${outcome.products.length === 1 ? '' : 's'}, ordered by evidence tier and then AI relevance.${outcome.semanticTruncated ? ' Only semantically evaluated options are shown.' : ''}`)
+          : (isHebrew ? `מצאתי ${outcome.products.length} אפשרויות מהקטלוג, לפי מידת ההתאמה.` : `I found ${outcome.products.length} catalog-backed option${outcome.products.length === 1 ? '' : 's'}, ordered by match.`);
+      return <IntentSection key={outcome.intent.id} title={outcome.intent.goal} summary={summary} status="completed" grouped={grouped} locale={locale}><PaginatedProductResults outcome={outcome} locale={locale} /></IntentSection>;
     })}
   </div>;
 }

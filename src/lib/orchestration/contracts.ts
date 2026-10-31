@@ -103,6 +103,8 @@ export const orchestrationResultSchema = z.object({
       matchReasons: z.array(matchReasonSchema),
       semanticRelevance: semanticProductRelevanceSchema.optional(),
     }).strict()),
+    semanticStatus: z.enum(['applied', 'fallback']).optional(),
+    semanticTruncated: z.boolean().optional(),
     clarification: z.object({
       field: z.enum(['maxPrice', 'minRating', 'category', 'inStock', 'brands', 'requiredTags', 'query']),
       question: z.string().trim().min(1),
@@ -123,6 +125,8 @@ export type ExtractedIntent = z.infer<typeof extractedIntentSchema>;
 export type IntentOutcome = {
   intent: ShoppingIntent;
   products: Array<RankedProduct & { semanticRelevance?: SemanticProductRelevance }>;
+  semanticStatus?: 'applied' | 'fallback';
+  semanticTruncated?: boolean;
   clarification?: import('./clarification').Clarification;
   error?: {
     code: string;

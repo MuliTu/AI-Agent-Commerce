@@ -183,6 +183,12 @@ This log records current decisions and proposals. “Accepted” means accepted 
 
 **Risks and gates:** Exact evidence spans must be verified against trusted fields; similarity, relevance score and confidence are not proof; provider timeout or invalid output falls back to the existing lexical/evidence behavior; explicit only-verified requests fail closed. Hosted OpenAI adds latency and usage cost, so the batch is bounded and evaluated once per intent.
 
+**Decision after the first live A/B run:** A semantic label is allowed only for evaluated products. We rejected appending candidates beyond the evaluator cap as `unknown: 0`, because “not evaluated” is not the same as “catalog evidence is unknown.” The experiment now evaluates the bounded displayed set and omits overflow. We also expose a user-safe fallback state rather than silently showing lexical order under a semantic-ordering claim.
+
+**Evidence-consistency rule:** The model may identify related meaning, but deterministic code resolves direct literal support. A validated quote can promote `partial` to `supported` only when it contains every meaningful requested feature term after category/stop-word removal. This accepts Huawei’s literal `slim` evidence while preventing `satellite SOS` from proving `satellite calling`.
+
+**Alternative considered:** Trust the model’s tier exactly. Rejected after the live run labeled Huawei’s literal slim description as partial and strict mode removed the correct product. The deterministic promotion is intentionally narrow and quote-bound, not a general semantic override.
+
 **Why this branch is separate:** The committed baseline already has independently verified fail-closed behavior. The visible reranker needs labelled live QA before it can be considered for the submission or production path.
 
 ## Decisions still requiring evidence or confirmation

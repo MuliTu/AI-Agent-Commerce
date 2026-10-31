@@ -84,6 +84,14 @@ describe('catalog feature evidence', () => {
       .toEqual([satellitePhone]);
   });
 
+  it('extracts natural strict confirmation wording', () => {
+    const requirements = requestedFeatureEvidence(
+      'Only show phones whose catalog listing confirms a high-resolution display.',
+    );
+    expect(requirements).toHaveLength(1);
+    expect(requirements[0].label).toContain('high resolution display');
+  });
+
   it('scopes a separate explicit proof clause back to the matching multi-intent segment', () => {
     const prompt = 'Find a phone with satellite calling and a fragrance. If the catalog does not mention satellite calling, return no phone products.';
     expect(requestedFeatureEvidenceForIntent({

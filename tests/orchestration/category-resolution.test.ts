@@ -7,7 +7,7 @@ import {
 } from '../../src/lib/orchestration/category-resolution';
 
 describe('multilingual catalog category resolution', () => {
-  const categories = ['smartphones', 'fragrances', 'laptops', 'luggage', 'kitchen-accessories', 'beauty'];
+  const categories = ['smartphones', 'fragrances', 'laptops', 'luggage', 'kitchen-accessories', 'beauty', 'mens-shoes', 'womens-shoes'];
 
   it.each([
     ['אני מחפש סמארטפון', 'smartphones'],
@@ -16,12 +16,22 @@ describe('multilingual catalog category resolution', () => {
     ['אני צריך מזוודה לנסיעה', 'luggage'],
     ['אני מחפש משהו טוב למטבח, אבל לא יקר מדי', 'kitchen-accessories'],
     ['יש לכם צלחות?', 'kitchen-accessories'],
+    ['Shoes for shooting hoops, with sporty backups', 'mens-shoes'],
+    ['red-and-black basketball shoes in stock', 'mens-shoes'],
+    ['Warm, cozy scent for a cold evening', 'fragrances'],
+    ['Makeup that controls shine', 'beauty'],
+    ['Mascara for dramatic lashes', 'beauty'],
+    ['איפור לריסים שצריכים נפח', 'beauty'],
   ])('maps %s to the relevant trusted category', (prompt, expected) => {
     expect(resolveCatalogCategory(undefined, prompt, categories)).toBe(expected);
   });
 
   it('does not guess an unrelated category for an unknown Hebrew product', () => {
     expect(resolveCatalogCategory(undefined, 'אני מחפש מוצר שלא קיים', categories)).toBeUndefined();
+  });
+
+  it('does not guess a gendered shoe category from the generic word shoes alone', () => {
+    expect(resolveCatalogCategory(undefined, 'Show me comfortable shoes', categories)).toBeUndefined();
   });
 });
 

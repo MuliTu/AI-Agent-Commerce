@@ -147,7 +147,7 @@ test('single intent returns catalog-grounded products', async ({ page }) => {
   await runExample(page, 'Single intent');
   await expect(page.getByRole('heading', { name: 'Find a catalog product' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Apple MacBook Pro 14 Inch Space Grey' })).toBeVisible();
-  await expect(page.getByText(/I found \d+ catalog-backed options?, ordered by relevance and evidence tier\./)).toBeVisible();
+  await expect(page.getByText(/I found \d+ catalog-backed options?, ordered by (?:match|relevance and evidence tier)\./)).toBeVisible();
 });
 
 test('a broken catalog image is replaced by an accessible fallback', async ({ page }) => {
@@ -331,7 +331,7 @@ test('three-intent request keeps independent constraints and results scoped to e
 });
 
 test('one failure in a three-intent request does not erase the two successful siblings', async ({ page }) => {
-  await page.getByLabel('What are you shopping for?').fill('Three intents partial failure: a work laptop under $1500, basketball shoes under $200, and a fragrance under $75');
+  await page.getByLabel('What are you shopping for?').fill('Three intents partial failure: a work laptop under $1500, basketball shoes under $200, and an unavailable catalog search under $75');
   await page.getByRole('button', { name: 'Find products' }).click();
 
   const goals = page.getByLabel('Shopping goals').locator('.intent');

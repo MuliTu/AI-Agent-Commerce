@@ -18,7 +18,7 @@ import {
   requestedFeatureEvidence,
   requestedFeatureEvidenceForIntent,
 } from './feature-evidence';
-import { decideFollowUpTargets, inspectPlanCategoryCoverage, isExclusiveNamedFollowUp } from './plan-integrity';
+import { coalesceAlternativeProductDrafts, decideFollowUpTargets, inspectPlanCategoryCoverage, isExclusiveNamedFollowUp } from './plan-integrity';
 import { classifyIntentRequest } from './request-classification';
 import {
   applySemanticEvidenceRanking,
@@ -71,7 +71,7 @@ export type OrchestrateTurnInput = {
 };
 
 const SEMANTIC_RERANK_TIMEOUT_MS = 8_000;
-const SEMANTIC_RERANK_CANDIDATE_LIMIT = 12;
+const SEMANTIC_RERANK_CANDIDATE_LIMIT = 30;
 
 async function evaluateSemanticRelevance(input: {
   evaluator: SemanticEvidenceEvaluator;
@@ -218,6 +218,11 @@ function shopperSafeResponse(outcomes: IntentOutcome[], isHebrew: boolean): stri
   if (unsupportedConstraint?.error) return unsupportedConstraint.error.message;
   const unavailableEvidence = outcomes.find(({ error }) => error?.code === 'catalog_evidence_unavailable');
   if (unavailableEvidence) {
+    if (unavailableEvidence.semanticStatus === 'fallback') {
+      return isHebrew
+        ? 'האימות הסמנטי לא היה זמין. כדי לשמור על בקשת האימות המחמירה שלך, לא אציג מוצרים שלא אומתו.'
+        : 'Semantic verification was unavailable. To preserve your strict verified-only request, I won’t show unverified products.';
+    }
     return isHebrew
       ? 'הקטלוג אינו מציין את התכונה שביקשת, ולכן לא אציג מוצרים כלליים כאילו היא אומתה.'
       : 'The catalog does not state the requested feature, so I won’t present generic products as verified matches.';
@@ -304,6 +309,18 @@ function constraintIssueMessage(issue: ConstraintSemanticIssue, isHebrew: boolea
 function evidenceAwareResponse(prompt: string, outcomes: IntentOutcome[], isHebrew: boolean): string {
   const safe = shopperSafeResponse(outcomes, isHebrew);
   if (outcomes.some(({ error, intent }) => error || intent.status !== 'completed')) return safe;
+  if (outcomes.some(({ semanticStatus }) => semanticStatus === 'fallback')) {
+    return isHebrew
+      ? 'הדירוג הסמנטי לא היה זמין, ולכן התוצאות מוצגות לפי הסינון והדירוג הדטרמיניסטיים של הקטלוג.'
+      : 'Semantic reranking was unavailable, so these results use deterministic catalog filtering and ordering.';
+  }
+  const semanticTiers = outcomes.flatMap(({ products }) => products.flatMap(({ semanticRelevance }) =>
+    semanticRelevance ? [semanticRelevance.tier] : []));
+  if (semanticTiers.some((tier) => tier === 'partial' || tier === 'unknown')) {
+    return isHebrew
+      ? 'התאמות מאומתות מוצגות ראשונות; אחריהן חלופות קשורות או לא מאומתות עם תווית ברורה.'
+      : 'Verified matches appear first; related or unverified alternatives follow with clear labels.';
+  }
   const requirements = requestedFeatureEvidence(prompt).map(({ label }) => label);
   if (requirements.includes('camera capabilities') && /\bgood\s+camera\b/iu.test(prompt)) {
     return isHebrew
@@ -400,6 +417,16 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
           throw new OrchestrationError('invalid_plan', 'The model returned an invalid intent plan.', error);
         }
       }
+
+      plan = {
+        ...plan,
+        intents: coalesceAlternativeProductDrafts(
+          promptResult.data,
+          plan.intents,
+          availableCategories,
+          resolveCatalogCategory,
+        ),
+      };
 
       const coverage = inspectPlanCategoryCoverage(
         promptResult.data,
@@ -665,10 +692,12 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
           const semanticRequirements = featureRequirements.length > 0
             ? featureRequirements
             : [{ label: intent.query, alternatives: [] as readonly string[] }];
+          const onlyVerified = requiresOnlyVerifiedEvidence(promptResult.data);
           const semanticCandidateLimit = semanticEvidenceCandidateLimit(
             semanticRequirements.length,
             SEMANTIC_RERANK_CANDIDATE_LIMIT,
           );
+          let semanticStatus: IntentOutcome['semanticStatus'];
           if (options.semanticEvidenceEvaluator && hardFiltered.length > 0 && semanticCandidateLimit > 0) {
             const semanticCandidates = hardFiltered.slice(0, semanticCandidateLimit);
             const report = await evaluateSemanticRelevance({
@@ -679,23 +708,19 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
                 timeoutMs: semanticEvidenceTimeoutMs,
             });
             if (report.status === 'completed') {
+              semanticStatus = 'applied';
               const ranked = applySemanticEvidenceRanking({
                 ranked: semanticCandidates,
                 assessments: report.assessments,
-                onlyVerified: requiresOnlyVerifiedEvidence(promptResult.data),
+                onlyVerified,
               });
-              const evaluatedIds = new Set(semanticCandidates.map(({ product }) => product.id));
-              const unevaluated = requiresOnlyVerifiedEvidence(promptResult.data)
-                ? []
-                : hardFiltered.filter(({ product }) => !evaluatedIds.has(product.id)).map((product) => ({
-                    ...product,
-                    semanticRelevance: { tier: 'unknown' as const, score: 0, confidence: 0, evidence: [] },
-                  }));
-              const products = [...ranked, ...unevaluated];
+              const products = ranked;
               if (products.length === 0) {
                 return {
                   intent: { ...intent, status: 'completed' },
                   products: [],
+                  semanticStatus,
+                  semanticTruncated: hardFiltered.length > semanticCandidates.length,
                   error: {
                     code: 'catalog_evidence_unavailable',
                     message: 'The catalog does not verify the requested feature.',
@@ -711,13 +736,20 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
                   clarification,
                 };
               }
-              return { intent: { ...intent, status: 'completed' }, products };
+              return {
+                intent: { ...intent, status: 'completed' },
+                products,
+                semanticStatus,
+                semanticTruncated: hardFiltered.length > semanticCandidates.length,
+              };
             }
+            semanticStatus = 'fallback';
           }
-          if (requiresOnlyVerifiedEvidence(promptResult.data) && featureRequirements.length === 0) {
+          if (onlyVerified && featureRequirements.length === 0) {
             return {
               intent: { ...intent, status: 'completed' },
               products: [],
+              ...(semanticStatus ? { semanticStatus } : {}),
               error: {
                 code: 'catalog_evidence_unavailable',
                 message: 'The catalog does not provide deterministic evidence for the requested verified-only feature.',
@@ -735,6 +767,7 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
             return {
               intent: { ...intent, status: 'completed' },
               products: [],
+              ...(semanticStatus ? { semanticStatus } : {}),
               error: {
                 code: 'catalog_evidence_unavailable',
                 message: 'The catalog does not state the requested feature.',
@@ -750,7 +783,11 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
               clarification,
             };
           }
-          return { intent: { ...intent, status: 'completed' }, products };
+          return {
+            intent: { ...intent, status: 'completed' },
+            products,
+            ...(semanticStatus ? { semanticStatus } : {}),
+          };
         } catch (error) {
           return scopedFailure(intent, error, input.retryIntentId === intent.id, /[\u0590-\u05ff]/u.test(promptResult.data));
         }

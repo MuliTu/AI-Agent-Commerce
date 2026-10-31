@@ -197,6 +197,16 @@ Execute the five bounded tasks in `QA_REMEDIATION_TASKS_2026-10-30.md`, integrat
 8. Prepare 15 creative ambiguous/colloquial prompts against real catalog fields for independent QA. Do not run this live matrix during implementation.
 9. Run static, unit/integration, build, and Playwright gates. Independent QA then runs the 15 live OpenAI cases and records expected versus actual tiers, scores, ordering, latency, and fallback behavior.
 
+### Live A/B remediation after the first 15-case run
+
+1. Broaden strict activation to natural `confirms`/documented wording and keep strict fallback fail-closed.
+2. Add deterministic evidence consistency so literal full-feature quotes (for example `slim`) cannot be rejected as merely partial, without promoting related-only evidence such as satellite SOS to satellite calling.
+3. Evaluate every product that will receive a semantic label. Remove unevaluated overflow instead of presenting it as `unknown: 0`.
+4. Persist a user-safe semantic status and disclose deterministic fallback in both API copy and UI summary.
+5. Derive response claims from actual card tiers so mixed verified/partial/unknown results cannot be described as verified-only.
+6. Fix upstream contextual-negation and category-synonym failures that prevent retrieval before reranking.
+7. Replay the same failed live cases independently and compare latency, tiers, evidence, ordering and fallback with the first A/B report.
+
 ### Experiment exit criteria
 
 - Offline tests prove schema validation, exact-quote validation, provider-failure fallback, multi-intent isolation, tier ordering, strict-only filtering, and visible labels.

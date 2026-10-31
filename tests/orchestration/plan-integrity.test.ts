@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ExtractedIntent } from '../../src/lib/orchestration/contracts';
 import {
+  coalesceAlternativeProductDrafts,
   decideFollowUpTargets,
   explicitPromptCategories,
   inspectPlanCategoryCoverage,
@@ -76,6 +77,23 @@ describe('plan category integrity', () => {
       categories,
       resolveCategory,
     )).toMatchObject({ requiresRepair: false });
+  });
+
+  it('coalesces a provider-invented backup intent into one explicitly grounded product goal', () => {
+    const localCategories = [...categories, 'mens-shoes'];
+    const localResolver: CategoryResolver = (requested, context, available) => {
+      if (requested && available.includes(requested)) return requested;
+      if (/basketball shoes|shooting hoops/iu.test(context)) return 'mens-shoes';
+      return undefined;
+    };
+    const prompt = 'Shoes for shooting hoops, though everyday sporty ones can be backups.';
+    const result = coalesceAlternativeProductDrafts(prompt, [
+      draft('basketball shoes', 'mens-shoes'),
+      draft('everyday sporty backups'),
+    ], localCategories, localResolver);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ query: prompt, constraints: { category: 'mens-shoes' } });
   });
 });
 

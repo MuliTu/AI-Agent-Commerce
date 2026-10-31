@@ -42,7 +42,7 @@ export type SemanticEvidenceReport =
   | { status: 'completed'; assessments: SemanticEvidenceAssessment[] }
   | { status: 'failed'; code: 'invalid_assessment' | 'evaluation_failed' };
 
-export function semanticEvidenceCandidateLimit(requirementCount: number, preferredLimit = 12): number {
+export function semanticEvidenceCandidateLimit(requirementCount: number, preferredLimit = 30): number {
   const validatedRequirementCount = z.number().int().min(1).parse(requirementCount);
   const validatedPreferredLimit = z.number().int().min(1).parse(preferredLimit);
   if (validatedRequirementCount > SEMANTIC_EVIDENCE_MAX_ASSESSMENTS) return 0;
@@ -55,6 +55,44 @@ export function semanticEvidenceCandidateLimit(requirementCount: number, preferr
 function fieldContainsQuote(product: Product, field: 'title' | 'description' | 'tags', quote: string): boolean {
   if (field === 'tags') return product.tags.some((tag) => tag.includes(quote));
   return product[field].includes(quote);
+}
+
+function normalize(value: string): string {
+  return value.normalize('NFKD').toLocaleLowerCase('en-US').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+
+const NON_FEATURE_TOKENS = new Set([
+  'a', 'an', 'the', 'only', 'show', 'find', 'me', 'please', 'with', 'whose', 'that', 'actually',
+  'verified', 'documented', 'confirmed', 'confirms', 'catalog', 'listing', 'product', 'products',
+  'phone', 'phones', 'smartphone', 'smartphones', 'laptop', 'laptops', 'fragrance', 'fragrances',
+  'shoe', 'shoes', 'makeup', 'under', 'below', 'over', 'usd', 'dollars', 'dollar', 'and', 'or',
+]);
+
+function meaningfulTokens(requirement: FeatureEvidenceRequirement): string[] {
+  return [...new Set(normalize(requirement.label).split(/\s+/u)
+    .filter((token) => token.length > 1 && !/^\d+(?:\.\d+)?$/u.test(token) && !NON_FEATURE_TOKENS.has(token)))];
+}
+
+function directCatalogEvidence(
+  product: Product,
+  requirement: FeatureEvidenceRequirement,
+): { field: 'title' | 'description' | 'tags'; quote: string } | undefined {
+  const fields = [
+    { field: 'title' as const, values: [product.title] },
+    { field: 'description' as const, values: [product.description] },
+    { field: 'tags' as const, values: product.tags },
+  ];
+  const alternatives = requirement.alternatives.map(normalize).filter(Boolean);
+  const requiredTokens = meaningfulTokens(requirement);
+  for (const { field, values } of fields) {
+    for (const value of values) {
+      const normalizedValue = normalize(value);
+      const alternativeMatch = alternatives.some((alternative) => normalizedValue.includes(alternative));
+      const tokenMatch = requiredTokens.length > 0 && requiredTokens.every((token) => normalizedValue.includes(token));
+      if (alternativeMatch || tokenMatch) return { field, quote: value.slice(0, 500) };
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -73,6 +111,7 @@ export function validateSemanticEvidenceBatch(
     input.requirements.map((requirement) => `${product.id}\u0000${requirement.label}`)));
   const seen = new Set<string>();
 
+  const normalizedAssessments: SemanticEvidenceAssessment[] = [];
   for (const assessment of parsed.assessments) {
     const key = `${assessment.productId}\u0000${assessment.requirement}`;
     if (!expected.has(key) || seen.has(key)) {
@@ -80,24 +119,34 @@ export function validateSemanticEvidenceBatch(
     }
     seen.add(key);
     const product = products.get(assessment.productId);
-    if (!product || assessment.evidence.some(({ field, quote }) => !fieldContainsQuote(product, field, quote))) {
-      throw new Error('Semantic evidence output cites text outside the trusted catalog fields.');
+    const requirement = input.requirements.find(({ label }) => label === assessment.requirement);
+    if (!product || !requirement) throw new Error('Semantic evidence output references an unknown product or requirement.');
+    const directEvidence = directCatalogEvidence(product, requirement);
+    const quotedEvidenceIsValid = assessment.evidence.every(({ field, quote }) => fieldContainsQuote(product, field, quote));
+    if (directEvidence && assessment.verdict !== 'contradicted') {
+      normalizedAssessments.push({
+        ...assessment,
+        verdict: 'supported',
+        evidence: [directEvidence],
+      });
+      continue;
     }
-    if (assessment.verdict !== 'unknown' && assessment.evidence.length === 0) {
-      throw new Error('A supported, partial, or contradicted semantic evidence verdict requires an exact catalog quote.');
+    if (!quotedEvidenceIsValid
+      || (assessment.verdict !== 'unknown' && assessment.evidence.length === 0)
+      || (assessment.verdict === 'unknown' && assessment.evidence.length > 0)) {
+      normalizedAssessments.push({ ...assessment, verdict: 'unknown', evidence: [] });
+      continue;
     }
-    if (assessment.verdict === 'unknown' && assessment.evidence.length > 0) {
-      throw new Error('An unknown semantic evidence verdict cannot claim catalog evidence.');
-    }
+    normalizedAssessments.push(assessment);
   }
   if (seen.size !== expected.size) {
     throw new Error('Semantic evidence output is incomplete.');
   }
-  return parsed;
+  return { assessments: normalizedAssessments };
 }
 
 export function requiresOnlyVerifiedEvidence(prompt: string): boolean {
-  return /(?:\bonly\b[^.?!]{0,50}\b(?:verified|documented|confirmed|stated|listed)\b|\bmust\s+be\s+(?:verified|documented|confirmed)\b|\bif\b[^.?!]{0,100}\b(?:does\s+not|doesn't|is\s+not|isn't)\b[^.?!]{0,50}\b(?:state|stated|mention|mentioned|list|listed|return\s+no|no\s+products?)\b|(?:רק|אך\s+ורק)[^.?!]{0,50}(?:מאומת|מתועד|מוזכר))/iu.test(prompt);
+  return /(?:\bonly\b[^.?!]{0,120}\b(?:verified|documented|confirmed|confirms?|stated|listed)\b|\bmust\s+be\s+(?:verified|documented|confirmed)\b|\bif\b[^.?!]{0,100}\b(?:does\s+not|doesn't|is\s+not|isn't)\b[^.?!]{0,50}\b(?:state|stated|mention|mentioned|list|listed|return\s+no|no\s+products?)\b|(?:רק|אך\s+ורק)[^.?!]{0,80}(?:מאומת|מתועד|מוזכר))/iu.test(prompt);
 }
 
 const tierOrder = { supported: 0, partial: 1, unknown: 2 } as const;

@@ -81,6 +81,29 @@ export function inspectPlanCategoryCoverage(
   };
 }
 
+export function coalesceAlternativeProductDrafts(
+  prompt: string,
+  drafts: readonly ExtractedIntent[],
+  availableCategories: readonly string[],
+  resolveCategory: CategoryResolver,
+): ExtractedIntent[] {
+  if (drafts.length < 2 || !/\b(?:backup|backups|alternative|alternatives)\b/iu.test(prompt)) return [...drafts];
+  const explicitCategories = explicitPromptCategories(prompt, availableCategories, resolveCategory);
+  if (explicitCategories.length !== 1) return [...drafts];
+  const [category] = explicitCategories;
+  const matching = drafts.filter((draft) => resolveCategory(
+    draft.constraints.category,
+    `${draft.goal ?? ''} ${draft.query ?? ''}`,
+    availableCategories,
+  ) === category);
+  if (matching.length !== 1) return [...drafts];
+  return [{
+    ...matching[0],
+    query: prompt,
+    constraints: { ...matching[0].constraints, category },
+  }];
+}
+
 export type PriorIntentReference = Pick<ShoppingIntent, 'id'> & {
   constraints: Pick<ShoppingIntent['constraints'], 'category'>;
 };
