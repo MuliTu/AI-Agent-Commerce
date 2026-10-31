@@ -49,6 +49,18 @@ describe('catalog feature evidence', () => {
     expect(filterProductsByFeatureEvidence([eveningFragrance], evening)).toEqual([eveningFragrance]);
   });
 
+  it('extracts bounded selfie-quality evidence without treating a generic selfie camera as proof', () => {
+    const requirements = requestedFeatureEvidence(
+      'אני רוצה טלפון לסלפי חד ומחמיא, עד 400 דולר — לא סתם טלפון עם מצלמה.',
+    );
+    expect(requirements).toContainEqual({
+      label: 'high-quality selfies',
+      alternatives: ['high quality selfie', 'high quality selfies'],
+    });
+    expect(requestedFeatureEvidence('Show me a phone with a selfie camera.').map(({ label }) => label))
+      .not.toContain('high-quality selfies');
+  });
+
   it.each([
     ['בושם לערב', 'בושם לערב'],
     ['בושם', 'fragrance'],

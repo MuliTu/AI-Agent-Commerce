@@ -195,6 +195,8 @@ This log records current decisions and proposals. “Accepted” means accepted 
 
 **Token-boundary decision:** Literal promotion and negative matching use normalized whole-token/phrase boundaries, not raw substring inclusion. Otherwise a term such as `red` could be falsely “proven” by a title such as `Predator Black`. Cross-field evidence remains allowed only when every complete requested token is present in trusted fields.
 
+**Q02 selfie-quality decision:** Add one bounded bilingual extraction rule for explicit selfie-quality wording and map it to literal `high-quality selfie/selfies` catalog evidence. This lets deterministic validation repair an inconsistent model verdict for Vivo V9 without naming or special-casing that product. Alternatives considered were trusting the evaluator (rejected because the same catalog sentence was labeled inconsistently), treating every selfie-camera mention as supported (rejected because camera presence does not prove image quality), and adding broad inferred synonyms such as `beautiful` or `sharp` (rejected because the catalog does not establish those claims).
+
 **Why this branch is separate:** The committed baseline already has independently verified fail-closed behavior. The visible reranker needs labelled live QA before it can be considered for the submission or production path.
 
 ## Decisions still requiring evidence or confirmation

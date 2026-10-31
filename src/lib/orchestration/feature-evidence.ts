@@ -12,6 +12,7 @@ const FEATURE_REQUIREMENTS: readonly FeatureEvidenceRequirement[] = [
   { label: 'eSIM support', alternatives: ['esim'] },
   { label: 'NFC support', alternatives: ['nfc'] },
   { label: 'camera capabilities', alternatives: ['camera', 'photography', 'photographic'] },
+  { label: 'high-quality selfies', alternatives: ['high quality selfie', 'high quality selfies'] },
   { label: 'evening use', alternatives: ['evening', 'night'] },
 ];
 
@@ -81,11 +82,15 @@ export function requestedFeatureEvidence(prompt: string): FeatureEvidenceRequire
   const curated = FEATURE_REQUIREMENTS.filter(({ label, alternatives }) => {
     const hebrewEveningMention = label === 'evening use'
       && /(?:בושם|ניחוח).{0,20}(?:לערב|ערב)|(?:לערב|ערב).{0,20}(?:בושם|ניחוח)/u.test(prompt);
-    const mentioned = hebrewEveningMention
+    const selfieQualityMention = label === 'high-quality selfies'
+      && (/(?:סלפי).{0,24}(?:חד|מחמיא)|(?:חד|מחמיא).{0,24}(?:סלפי)/u.test(prompt)
+        || /\b(?:high quality|sharp|flattering)\s+selfies?\b/u.test(normalized));
+    const mentioned = hebrewEveningMention || selfieQualityMention
       || alternatives.some((term) => normalized.includes(normalize(term)));
     if (!mentioned) return false;
     if (requiresEvidence) return true;
     if (label === 'camera capabilities') return /\b(?:camera focused|good camera|camera capabilities)\b/u.test(normalized);
+    if (label === 'high-quality selfies') return selfieQualityMention;
     if (label === 'evening use') {
       return /\bevening\s+(?:fragrance|perfume|scent)\b/u.test(normalized) || hebrewEveningMention;
     }

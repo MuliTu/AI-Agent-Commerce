@@ -388,6 +388,58 @@ describe('semantic evidence relevance evaluation', () => {
     });
   });
 
+  it('promotes literal high-quality selfie evidence without promoting generic selfie cameras', async () => {
+    const vivoV9: Product = {
+      ...phone, id: 62, title: 'Vivo V9', price: 299.99,
+      description: 'A smartphone with an emphasis on capturing high-quality selfies.',
+      tags: ['smartphones', 'selfie'],
+    };
+    const genericSelfiePhone: Product = {
+      ...phone, id: 63, title: 'Front Camera Phone', price: 249.99,
+      description: 'A smartphone with a front-facing selfie camera.', tags: ['smartphones', 'selfie'],
+    };
+    const expensiveVivo: Product = { ...vivoV9, id: 64, title: 'Premium Selfie Phone', price: 499.99 };
+    const evaluator = vi.fn(async ({ products, requirements: scopedRequirements }: SemanticEvidenceInput) => ({
+      assessments: products.flatMap((product) => scopedRequirements.map((requirement) => ({
+        productId: product.id, requirement: requirement.label, verdict: 'unknown' as const,
+        confidence: 0.5, relevanceScore: product.id === 62 ? 0.98 : 0.7, evidence: [],
+      }))),
+    }));
+    const result = await createIntentOrchestrator({
+      catalog: {
+        searchProducts: vi.fn(),
+        listProductsByCategory: vi.fn(async () => ({
+          products: [genericSelfiePhone, expensiveVivo, vivoV9], total: 3, skip: 0, limit: 100,
+        })),
+        getProduct: vi.fn(),
+        listCategories: vi.fn(async () => [{ slug: 'smartphones', name: 'Smartphones', url: 'catalog' }]),
+      },
+      extractIntents: async () => ({
+        response: 'מחפש',
+        intents: [{
+          goal: 'טלפון לסלפי חד ומחמיא', query: 'selfie smartphone',
+          constraints: { category: 'smartphones', maxPrice: 400 },
+        }],
+      }),
+      semanticEvidenceEvaluator: evaluator,
+    }).run({
+      turnId: 'selfie-quality', conversationId: 'qa',
+      prompt: 'אני רוצה טלפון לסלפי חד ומחמיא, עד 400 דולר — לא סתם טלפון עם מצלמה.',
+    });
+
+    expect(evaluator).toHaveBeenCalledWith(expect.objectContaining({
+      products: expect.arrayContaining([
+        expect.objectContaining({ id: 62 }),
+        expect.objectContaining({ id: 63 }),
+      ]),
+      requirements: [expect.objectContaining({ label: 'high-quality selfies' })],
+    }));
+    expect(evaluator.mock.calls[0]?.[0].products.map(({ id }) => id)).not.toContain(64);
+    expect(result.outcomes[0].products.map(({ product }) => product.id)).toEqual([62, 63]);
+    expect(result.outcomes[0].products.map(({ semanticRelevance }) => semanticRelevance?.tier))
+      .toEqual(['supported', 'unknown']);
+  });
+
   it('combines exact title and description evidence for the red-black basketball shoe', () => {
     const jordan: Product = {
       ...phone, id: 108, title: 'Nike Air Jordan 1 Red And Black', category: 'mens-shoes',

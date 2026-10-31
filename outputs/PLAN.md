@@ -215,6 +215,13 @@ Execute the five bounded tasks in `QA_REMEDIATION_TASKS_2026-10-30.md`, integrat
 4. Match deterministic evidence at normalized token/phrase boundaries and test substring traps, over-budget slim distractors, and out-of-stock exact shoes.
 5. Keep related-only satellite evidence partial, preserve strict fail-closed behavior, and rerun Q08 plus Q10/Q11 controls independently.
 
+### Submission-comparison Q02 closure
+
+1. Extract a bounded high-quality-selfie requirement from explicit English or Hebrew selfie-quality wording, rather than passing only a broad provider-generated query to the evidence evaluator.
+2. Promote only literal whole-phrase catalog evidence such as `high-quality selfies`; do not treat a generic selfie/front-camera mention as proof of sharp or flattering output.
+3. Add real-shaped Vivo V9, generic selfie-camera, unrelated camera-phone, and over-budget controls; verify deterministic price filtering still occurs before semantic evaluation.
+4. Rerun deterministic and browser gates, then hand Q02 to independent live QA. Do not use the implementation run to self-certify model stability.
+
 ### Experiment exit criteria
 
 - Offline tests prove schema validation, exact-quote validation, provider-failure fallback, multi-intent isolation, tier ordering, strict-only filtering, and visible labels.
