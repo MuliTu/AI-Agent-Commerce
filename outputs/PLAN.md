@@ -222,6 +222,14 @@ Execute the five bounded tasks in `QA_REMEDIATION_TASKS_2026-10-30.md`, integrat
 3. Add real-shaped Vivo V9, generic selfie-camera, unrelated camera-phone, and over-budget controls; verify deterministic price filtering still occurs before semantic evaluation.
 4. Rerun deterministic and browser gates, then hand Q02 to independent live QA. Do not use the implementation run to self-certify model stability.
 
+### Additive-topic follow-up and correlated diagnostics
+
+1. Reproduce phone → “Also show me perfumes under $100” → “Show me cheaper options” with a deterministic three-turn regression.
+2. Prevent an unmatched explicit new category from being rebound to the sole prior intent; preserve prior outcomes only when the prompt explicitly marks the new topic as additive.
+3. Clarify the target for a category-free constraint follow-up when both preserved topics remain active; keep `cheaper` defined as price-ascending ordering without inventing a price ceiling.
+4. Add opt-in structured server diagnostics for request, plan, target decision, search constraints, results and errors, correlated without exposing credentials or full provider/catalog envelopes.
+5. Verify summary versus bounded development-only verbose logging, run full checks, and leave all existing conversations untouched.
+
 ### Experiment exit criteria
 
 - Offline tests prove schema validation, exact-quote validation, provider-failure fallback, multi-intent isolation, tier ordering, strict-only filtering, and visible labels.

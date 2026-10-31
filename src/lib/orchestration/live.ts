@@ -7,6 +7,7 @@ import { createProviderSemanticEvidenceEvaluator } from './semantic-evidence-pro
 import type { SemanticEvidenceReport } from './semantic-evidence';
 import type { OrchestrationResult } from './contracts';
 import type { ClarificationAnswer } from './contracts';
+import { createServerDiagnosticReporter } from '../diagnostics/server-trace';
 
 export async function runLiveOrchestration(input: {
   turnId: string;
@@ -28,10 +29,15 @@ export async function runLiveOrchestration(input: {
   const extractIntents = createProviderIntentExtractor({ environment });
   const semanticEvidenceEvaluator = createProviderSemanticEvidenceEvaluator({ environment });
   const catalog = new DummyJsonCatalogClient();
+  const serverDiagnostics = createServerDiagnosticReporter({
+    conversationId: input.conversationId,
+    turnId: input.turnId,
+  });
   return createIntentOrchestrator({
     catalog,
     extractIntents,
     semanticEvidenceEvaluator,
+    observeDecision: (event) => serverDiagnostics.decision(event),
     observeSemanticEvidence: (report: SemanticEvidenceReport) => {
       if (process.env.NODE_ENV === 'test') return;
       const summary = report.status === 'completed'

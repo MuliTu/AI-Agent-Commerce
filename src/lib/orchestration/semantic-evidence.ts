@@ -181,6 +181,7 @@ export function applySemanticEvidenceRanking<T extends { product: Product; score
   onlyVerified: boolean;
   negativeTerms?: string[];
 }): Array<T & { semanticRelevance: SemanticProductRelevance }> {
+  const baselineOrder = new Map(input.ranked.map((ranked, index) => [ranked.product.id, index]));
   const byProduct = new Map<number, SemanticEvidenceAssessment[]>();
   for (const assessment of input.assessments) {
     const current = byProduct.get(assessment.productId) ?? [];
@@ -205,7 +206,8 @@ export function applySemanticEvidenceRanking<T extends { product: Product; score
     return [{ ...ranked, semanticRelevance: { tier, score, confidence, evidence } }];
   }).sort((left, right) => tierOrder[left.semanticRelevance.tier] - tierOrder[right.semanticRelevance.tier]
     || right.semanticRelevance.score - left.semanticRelevance.score
-    || right.score - left.score
+    || (baselineOrder.get(left.product.id) ?? Number.MAX_SAFE_INTEGER)
+      - (baselineOrder.get(right.product.id) ?? Number.MAX_SAFE_INTEGER)
     || left.product.id - right.product.id);
 }
 

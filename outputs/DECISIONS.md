@@ -179,7 +179,7 @@ This log records current decisions and proposals. “Accepted” means accepted 
 4. Treat every semantically related product as satisfying the feature. Rejected because related evidence is not verification and would mislead the shopper.
 5. Hide every non-supported product. Rejected for normal relevance requests because it discards useful alternatives; retained when the shopper explicitly asks for only verified matches.
 
-**Score policy:** Evidence tier is the primary order and cannot be overridden by a score. The model relevance score orders products only within the same tier; deterministic lexical score breaks ties. Confidence describes the model assessment, not product truth. Every non-unknown claim requires a validated catalog quote.
+**Score policy:** Evidence tier is the primary order and cannot be overridden by a score. The model relevance score orders products only within the same tier; ties preserve the deterministic pre-rerank order—lexical relevance normally, or price ascending when requested. Confidence describes the model assessment, not product truth. Every non-unknown claim requires a validated catalog quote.
 
 **Risks and gates:** Exact evidence spans must be verified against trusted fields; similarity, relevance score and confidence are not proof; provider timeout or invalid output falls back to the existing lexical/evidence behavior; explicit only-verified requests fail closed. Hosted OpenAI adds latency and usage cost, so the batch is bounded and evaluated once per intent.
 
@@ -196,6 +196,10 @@ This log records current decisions and proposals. “Accepted” means accepted 
 **Token-boundary decision:** Literal promotion and negative matching use normalized whole-token/phrase boundaries, not raw substring inclusion. Otherwise a term such as `red` could be falsely “proven” by a title such as `Predator Black`. Cross-field evidence remains allowed only when every complete requested token is present in trusted fields.
 
 **Q02 selfie-quality decision:** Add one bounded bilingual extraction rule for explicit selfie-quality wording and map it to literal `high-quality selfie/selfies` catalog evidence. This lets deterministic validation repair an inconsistent model verdict for Vivo V9 without naming or special-casing that product. Alternatives considered were trusting the evaluator (rejected because the same catalog sentence was labeled inconsistently), treating every selfie-camera mention as supported (rejected because camera presence does not prove image quality), and adding broad inferred synonyms such as `beautiful` or `sharp` (rejected because the catalog does not establish those claims).
+
+**Additive-topic identity decision:** An explicit category that matches no previous intent is a new topic, even when the prompt also contains a budget. If it is introduced with an additive marker such as “also,” preserve prior successful outcomes as active siblings. Reusing the sole prior intent ID was rejected because it silently changed a phone intent into perfume and erased the very ambiguity a later “cheaper” follow-up needed to expose.
+
+**Development diagnostics decision:** Add structured, opt-in server diagnostics with a hashed per-turn correlation key. Summary mode records only bounded structural metadata; development-only verbose mode may include a truncated shopper prompt and trusted catalog product titles. Both modes exclude credentials, raw provider envelopes, catalog descriptions and database payloads. Always-on raw logging was rejected for privacy; error-only logging was rejected because it cannot explain successful-but-wrong routing decisions.
 
 **Why this branch is separate:** The committed baseline already has independently verified fail-closed behavior. The visible reranker needs labelled live QA before it can be considered for the submission or production path.
 

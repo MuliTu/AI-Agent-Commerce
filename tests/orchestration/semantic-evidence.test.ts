@@ -310,7 +310,7 @@ describe('semantic evidence relevance evaluation', () => {
       .map(({ product }) => product.id)).toEqual([1]);
   });
 
-  it('uses semantic score only within the same evidence tier, then lexical score as a tie-breaker', () => {
+  it('uses semantic score within a tier, then preserves the deterministic baseline order', () => {
     const products = [
       { product: phone, score: 0.9, matchReasons: [] },
       { product: { ...phone, id: 2 }, score: 0.1, matchReasons: [] },
@@ -324,6 +324,12 @@ describe('semantic evidence relevance evaluation', () => {
 
     expect(applySemanticEvidenceRanking({ ranked: products, assessments, onlyVerified: false })
       .map(({ product }) => product.id)).toEqual([3, 2, 1]);
+
+    const tiedAssessments = assessments.map((assessment) => ({
+      ...assessment, verdict: 'partial' as const, relevanceScore: 0.7,
+    }));
+    expect(applySemanticEvidenceRanking({ ranked: products, assessments: tiedAssessments, onlyVerified: false })
+      .map(({ product }) => product.id)).toEqual([1, 2, 3]);
   });
 
   it('promotes literal slim evidence but does not confuse satellite SOS with satellite calling', () => {

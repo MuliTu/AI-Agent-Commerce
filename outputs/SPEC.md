@@ -264,6 +264,7 @@ Persist only what is necessary. Secrets, raw provider credentials, and unnecessa
 - Bazak responds in the shopper's language for Hebrew and English turns while trusted catalog product fields remain in their source language and render LTR inside RTL conversation chrome.
 - Every new turn starts a new intent scope unless it explicitly carries a validated clarification or retry identity from the previous result. Unknown categories fail honestly instead of falling back to an unrelated catalog category.
 - Deterministic follow-up repair may attach a constraint-only turn to the sole relevant previous product intent when the provider omits its ID. When several previous product intents are plausible, clarification options are derived from those intents or trusted catalog evidence, never from a fixed unrelated category list.
+- An additive named-topic turn such as “Also show me perfumes under $100” starts a new perfume intent and preserves the prior phone intent; it must not reuse the phone intent ID merely because that was previously the only active topic. A later category-free “Show me cheaper options” therefore asks which active product intent to refine. `Cheaper` means price-ascending ordering unless the shopper supplies an explicit new maximum; it does not invent a lower price ceiling. When evidence tier and semantic score tie, the reranker preserves this deterministic price order instead of substituting lexical score.
 - Unsupported services such as flights render as concise conversational prose; supported sibling product intents remain independently actionable.
 - Weather and other non-catalog questions use the same friendly catalog-only boundary. A refusal is rendered once, and mixed product/off-topic turns retain the supported product result.
 - Filtered searches that return no products name the empty match condition accurately (for example, no laptops under $800) and invite a relevant constraint change.
@@ -277,7 +278,7 @@ A price-picker component is discussion-only and is not part of this implementati
 
 ## 16. Live-provider QA remediation
 
-The confirmed scenarios in `QA_LIVE_AI_REPORT_2026-10-30.md` are release regressions. Acceptance requires deterministic coverage for each invariant and a separate opt-in live-provider replay. Provider-plan observability is bounded to structural summaries and must not persist credentials, authorization data, raw provider responses or catalog payloads.
+The confirmed scenarios in `QA_LIVE_AI_REPORT_2026-10-30.md` are release regressions. Acceptance requires deterministic coverage for each invariant and a separate opt-in live-provider replay. Provider-plan observability is bounded to structural summaries and must not persist credentials, authorization data, raw provider responses or catalog payloads. Opt-in server diagnostics use one hashed correlation key per conversation/turn and structured stages for request receipt, interpreted plan, follow-up targeting, search constraints, result summaries and errors. Summary mode logs no raw shopper prompt or product titles. Verbose prompt/title content is bounded, development-only, disabled by default and documented explicitly.
 
 ## 17. Local semantic-evidence relevance experiment
 

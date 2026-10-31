@@ -18,7 +18,7 @@ import {
   requestedFeatureEvidence,
   requestedFeatureEvidenceForIntent,
 } from './feature-evidence';
-import { coalesceAlternativeProductDrafts, decideFollowUpTargets, inspectPlanCategoryCoverage, isExclusiveNamedFollowUp } from './plan-integrity';
+import { coalesceAlternativeProductDrafts, decideFollowUpTargets, inspectPlanCategoryCoverage, isAdditiveNamedRequest, isExclusiveNamedFollowUp } from './plan-integrity';
 import { classifyIntentRequest } from './request-classification';
 import {
   applySemanticEvidenceRanking,
@@ -39,6 +39,7 @@ import {
   isCatalogCategoryGrounded,
   resolveCatalogCategory,
 } from './category-resolution';
+import type { OrchestrationDecisionDiagnostic } from '../diagnostics/server-trace';
 
 const shopperPromptSchema = z.string().trim().min(1);
 
@@ -59,6 +60,7 @@ export type IntentOrchestratorOptions = {
   retryOptions?: RetryOptions;
   semanticEvidenceEvaluator?: SemanticEvidenceEvaluator;
   observeSemanticEvidence?: (report: SemanticEvidenceReport) => void;
+  observeDecision?: (event: OrchestrationDecisionDiagnostic) => void;
   semanticEvidenceTimeoutMs?: number;
 };
 
@@ -457,6 +459,22 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
           }),
         };
       }
+      try {
+        options.observeDecision?.({
+          stage: 'intent_interpretation',
+          intents: plan.intents.map((intent, index) => ({
+            intentId: intent.intentId ?? `new-intent-${index}`,
+            status: intent.status,
+            ...(intent.constraints.category ? { category: intent.constraints.category } : {}),
+            constraintKeys: Object.entries(intent.constraints)
+              .filter(([, value]) => value !== undefined)
+              .map(([key]) => key)
+              .sort(),
+          })),
+        });
+      } catch {
+        // Development diagnostics cannot fail a shopper request.
+      }
 
       const used = new Set<string>();
       const previousProductOutcomes = previousOutcomes.filter(({ intent, error }) =>
@@ -476,6 +494,29 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
         availableCategories,
         resolveCatalogCategory,
       );
+      const additiveNamedRequest = isAdditiveNamedRequest(
+        promptResult.data,
+        availableCategories,
+        resolveCatalogCategory,
+      );
+      try {
+        options.observeDecision?.({
+          stage: 'follow_up_target',
+          previousIntentCount: previousProductOutcomes.length,
+          previousCategories: previousProductOutcomes.flatMap(({ intent }) =>
+            intent.constraints.category ? [intent.constraints.category] : []),
+          constraintOnly: constraintOnlyFollowUp,
+          additiveNamedRequest,
+          decision: followUpTarget.kind,
+          targetCount: followUpTarget.kind === 'single'
+            ? 1
+            : followUpTarget.kind === 'all' || followUpTarget.kind === 'clarify'
+              ? followUpTarget.intentIds.length
+              : 0,
+        });
+      } catch {
+        // Development diagnostics cannot fail a shopper request.
+      }
       const drafts: ExtractedIntent[] = followUpTarget.kind === 'clarify'
         ? [{
           goal: /[\u0590-\u05ff]/u.test(promptResult.data) ? 'בחירת מוצר לעדכון' : 'Choose which product to refine',
@@ -587,7 +628,10 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
       const plannedIds = new Set(planned.map(({ id }) => id));
       const continuesPreviousIntent = planned.some(({ id }) => previous.has(id));
       const shouldPreserveSiblingIntents = Boolean(
-        input.retryIntentId || input.clarification || (continuesPreviousIntent && !exclusiveNamedFollowUp),
+        input.retryIntentId
+        || input.clarification
+        || additiveNamedRequest
+        || (continuesPreviousIntent && !exclusiveNamedFollowUp),
       );
       const preserved = await Promise.all((shouldPreserveSiblingIntents ? previousOutcomes : [])
         .filter(({ intent }) => !plannedIds.has(intent.id))
@@ -672,6 +716,22 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
           return { intent, products: [], clarification: evaluateClarification(intent, [], relevantCategories) };
         }
         try {
+          try {
+            options.observeDecision?.({
+              stage: 'catalog_search',
+              intentId: intent.id,
+              ...(intent.constraints.category ? { category: intent.constraints.category } : {}),
+              filters: {
+                maxPrice: intent.constraints.maxPrice,
+                minRating: intent.constraints.minRating,
+                inStock: intent.constraints.inStock,
+                brands: intent.constraints.brands,
+                sort: intent.constraints.sort,
+              },
+            });
+          } catch {
+            // Development diagnostics cannot fail a shopper request.
+          }
           const search = () => intent.constraints.category
             ? handlers.listCategoryProducts(intent.constraints.category)
             : handlers.searchCatalog({ query: intent.query, limit: 20 });

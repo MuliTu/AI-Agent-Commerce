@@ -13,6 +13,16 @@ npm run dev
 
 Open `http://localhost:3000`. Conversation data defaults to `var/data/commerce.sqlite`; set the server-only `BAZAK_DATABASE_PATH` to use a different SQLite file.
 
+For correlated server-side debugging during `npm run dev`, opt into bounded structured logs:
+
+```bash
+BAZAK_SERVER_DIAGNOSTICS=summary npm run dev
+# Explicitly include a redacted, 500-character prompt and trusted product titles:
+BAZAK_SERVER_DIAGNOSTICS=verbose npm run dev
+```
+
+Diagnostics are off by default and always off when `NODE_ENV=production`. Every line starts with `bazak_server_diagnostic` and contains a hashed per-turn `traceId`. Summary mode records prompt length/language/hash, interpreted intent structure, follow-up target, search filters, product IDs/counts and error codes; it does not record raw shopper text, model prose, product titles, catalog descriptions, credentials or provider envelopes. Verbose mode is development-only, bounded and secret-redacted, but may still contain shopper wording, so enable it only for a controlled local reproduction.
+
 The safe default, `LLM_PROVIDER=disabled`, makes shopping requests fail closed. For the hosted boundary, configure these server-only values in an ignored environment file:
 
 ```text
@@ -73,7 +83,7 @@ flowchart TD
   X --> D
 ```
 
-The intent model decides what to search for; it does not author products. DummyJSON remains the product source. The second model evaluates only retrieved catalog text and cannot bypass hard filters. Its score influences order only within an evidence tier, while exact evidence determines whether a product may be called verified.
+The intent model decides what to search for; it does not author products. DummyJSON remains the product source. The second model evaluates only retrieved catalog text and cannot bypass hard filters. Its score influences order only within an evidence tier; ties preserve the deterministic baseline order, which is lexical relevance normally and price ascending for an explicit cheaper request. Exact evidence determines whether a product may be called verified.
 
 The first independent 15-case live A/B run found that silent fallback, narrow strict wording, contextual negation, category synonyms, and a 12-product evaluator cap could undermine that contract. The remediation keeps strict requests fail-closed, labels only evaluated products, discloses fallback, derives global copy from actual card tiers, and uses narrow literal-evidence consistency so direct terms such as `slim` cannot be rejected while related terms such as `satellite SOS` still do not prove satellite calling.
 
@@ -89,6 +99,8 @@ A third production alternative—managed durable storage plus a queue/worker lea
 ## Ambiguity, off-catalog requests, and failures
 
 Missing optional preferences do not block a known category. The app asks one clarification only when the category is unresolved or the result is materially empty/split. In a multi-intent request, an unaffected sibling can still complete. Requests such as flights receive a bounded explanation and never reuse stale product results.
+
+An additive prompt such as “Also show me perfumes under $100” preserves the prior product topic as a sibling. A later category-free “Show me cheaper options” asks which active topic to refine. Once scoped, `cheaper` requests price-ascending ordering; without an explicit amount they do not invent a lower maximum price, so an already price-ordered list may remain unchanged.
 
 Transient provider/catalog retry infrastructure supports five total attempts, but the current live orchestrator applies it only to an explicit retry of a failed intent. Initial provider and catalog operations are not yet uniformly wrapped, and completed executions currently persist an empty `toolRuns` list. Therefore the authored five-attempt/attempt-observability target in `outputs/SPEC.md` is **deferred**, not an employer requirement or a completed feature.
 

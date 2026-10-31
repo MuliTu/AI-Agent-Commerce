@@ -101,6 +101,68 @@ describe('live QA functional regressions', () => {
     expect(result.response).not.toContain('updated fragrance');
   });
 
+  it('preserves an additive perfume topic and clarifies a later category-free cheaper request', async () => {
+    const decisions: unknown[] = [];
+    const orchestrator = createIntentOrchestrator({
+      catalog: catalog(),
+      observeDecision: (event) => decisions.push(event),
+      extractIntents: async ({ prompt, previousIntents }) => {
+        if (prompt === 'Find me a smartphone') {
+          return {
+            response: 'found phone',
+            intents: [{ goal: 'smartphone', query: 'smartphone', constraints: { category: 'smartphones' } }],
+          };
+        }
+        if (prompt.startsWith('Also')) {
+          return {
+            response: 'added perfume',
+            intents: [{ goal: 'perfumes under $100', query: 'perfume', constraints: { category: 'fragrances', maxPrice: 100 } }],
+          };
+        }
+        return {
+          response: 'made perfume cheaper',
+          intents: [{ intentId: previousIntents.find(({ constraints }) => constraints.category === 'fragrances')?.id, constraints: { sort: 'price_asc' as const } }],
+        };
+      },
+    });
+    const phoneTurn = await orchestrator.run({
+      turnId: 'phone-turn', conversationId: 'same-conversation', prompt: 'Find me a smartphone',
+    });
+    const additiveTurn = await orchestrator.run({
+      turnId: 'perfume-turn', conversationId: 'same-conversation',
+      prompt: 'Also show me perfumes under $100.', previous: phoneTurn,
+    });
+    const cheaperTurn = await orchestrator.run({
+      turnId: 'cheaper-turn', conversationId: 'same-conversation',
+      prompt: 'Show me cheaper options', previous: additiveTurn,
+    });
+
+    expect(additiveTurn.outcomes.map(({ intent }) => intent.constraints.category))
+      .toEqual(['smartphones', 'fragrances']);
+    expect(additiveTurn.outcomes[0].intent.id).toBe(phoneTurn.outcomes[0].intent.id);
+    expect(additiveTurn.outcomes[1].intent.id).not.toBe(phoneTurn.outcomes[0].intent.id);
+    expect(cheaperTurn).toMatchObject({
+      status: 'partial',
+      outcomes: [{
+        intent: { status: 'needs_clarification', constraints: { sort: 'price_asc' } },
+        clarification: { field: 'category' },
+      }],
+    });
+    expect(decisions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        stage: 'follow_up_target', previousIntentCount: 1,
+        additiveNamedRequest: true, decision: 'not_refinement', targetCount: 0,
+      }),
+      expect.objectContaining({
+        stage: 'catalog_search', category: 'fragrances', filters: expect.objectContaining({ maxPrice: 100 }),
+      }),
+      expect.objectContaining({
+        stage: 'follow_up_target', previousIntentCount: 2,
+        constraintOnly: true, decision: 'clarify', targetCount: 2,
+      }),
+    ]));
+  });
+
   it('targets an explicitly named definite Hebrew product without asking ambiguity', async () => {
     const orchestrator = createIntentOrchestrator({
       catalog: catalog(),

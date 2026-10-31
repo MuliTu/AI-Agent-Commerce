@@ -308,6 +308,31 @@ describe('orchestration route contracts', () => {
     expect(execute).toHaveBeenCalledOnce();
   });
 
+  it('emits correlated request and result diagnostics when explicitly enabled in development', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('BAZAK_SERVER_DIAGNOSTICS', 'summary');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    try {
+      const response = await createPostHandler({ execute: vi.fn(async () => result) })(new Request('http://local/api/orchestrate', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          prompt: 'Show me cheaper perfume options', conversationId: 'diagnostic-conversation', turnId: 'diagnostic-turn',
+        }),
+      }));
+      expect(response.status).toBe(200);
+      const lines = info.mock.calls.map(([line]) => String(line));
+      expect(lines).toHaveLength(2);
+      expect(lines[0]).toContain('request_received');
+      expect(lines[1]).toContain('result_completed');
+      const traceIds = lines.map((line) => JSON.parse(line.replace('bazak_server_diagnostic ', '')).traceId);
+      expect(new Set(traceIds).size).toBe(1);
+      expect(lines.join('\n')).not.toContain('Show me cheaper perfume options');
+    } finally {
+      info.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('returns a terminal clarification result instead of an execution failure', async () => {
     const clarificationResult: OrchestrationResult = {
       turnId: 'turn-clarification',

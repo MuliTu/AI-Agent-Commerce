@@ -5,6 +5,7 @@ import {
   decideFollowUpTargets,
   explicitPromptCategories,
   inspectPlanCategoryCoverage,
+  isAdditiveNamedRequest,
   isExclusiveNamedFollowUp,
   type CategoryResolver,
 } from '../../src/lib/orchestration/plan-integrity';
@@ -149,5 +150,16 @@ describe('follow-up target integrity', () => {
 
   it('does not make an ordinary named refinement exclusive', () => {
     expect(isExclusiveNamedFollowUp('Make the fragrance under $70', categories, resolveCategory)).toBe(false);
+  });
+
+  it('treats an additive unmatched category as a new sibling topic', () => {
+    expect(decideFollowUpTargets({
+      prompt: 'Also show me perfumes under $100.',
+      previousIntents: previousIntents.slice(0, 1),
+      availableCategories: categories,
+      resolveCategory,
+    })).toEqual({ kind: 'not_refinement' });
+    expect(isAdditiveNamedRequest('Also show me perfumes under $100.', categories, resolveCategory)).toBe(true);
+    expect(isAdditiveNamedRequest('Show me perfumes under $100.', categories, resolveCategory)).toBe(false);
   });
 });

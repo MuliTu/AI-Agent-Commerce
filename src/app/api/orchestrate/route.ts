@@ -3,6 +3,7 @@ import { AgentBoundaryError } from '@/lib/agent';
 import { conversationStateSchema, orchestrationRequestSchema, orchestrationResponseSchema } from '@/lib/orchestration/http';
 import { OrchestrationError } from '@/lib/orchestration/orchestrator';
 import { createSafeDiagnostic, normalizeSafeDiagnostic, type DiagnosticStage, type SafeDiagnostic } from '@/lib/diagnostics/provider-diagnostic';
+import { createServerDiagnosticReporter } from '@/lib/diagnostics/server-trace';
 import { PersistenceConflictError } from '@/lib/persistence';
 import {
   ConversationNotFoundError,
@@ -37,8 +38,17 @@ export function createPostHandler(service: Pick<ConversationExecutionService, 'e
         'request_validation',
       );
     }
+    const serverDiagnostics = createServerDiagnosticReporter({
+      conversationId: parsed.data.conversationId,
+      turnId: parsed.data.turnId,
+    });
+    serverDiagnostics.request(parsed.data.prompt, {
+      retryIntentId: parsed.data.retryIntentId,
+      hasClarification: parsed.data.clarification !== undefined,
+    });
     try {
       const result = await service.execute(parsed.data);
+      serverDiagnostics.result(result);
       try {
         return NextResponse.json(orchestrationResponseSchema.parse({ result }));
       } catch (error) {
@@ -50,6 +60,12 @@ export function createPostHandler(service: Pick<ConversationExecutionService, 'e
         );
       }
     } catch (error) {
+      serverDiagnostics.error('api_orchestration', {
+        code: error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+          ? error.code
+          : undefined,
+        name: error instanceof Error ? error.name : undefined,
+      });
       if (AgentBoundaryError.isInstance(error)) {
         const status = error.code === 'provider_authentication'
           ? 503
