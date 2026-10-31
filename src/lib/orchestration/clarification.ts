@@ -14,14 +14,21 @@ const supplied = (constraints: Constraints, field: keyof Constraints): boolean =
   return Array.isArray(value) ? value.length > 0 : value !== undefined;
 };
 
-function categoryQuestion(products: readonly RankedProduct[], reason: Clarification['reason']): Clarification {
-  const categories = [...new Set(products.map(({ product }) => product.category))].slice(0, 3);
+function categoryQuestion(
+  products: readonly RankedProduct[],
+  reason: Clarification['reason'],
+  availableCategories: readonly string[],
+): Clarification {
+  const productCategories = [...new Set(products.map(({ product }) => product.category))];
+  const categories = (productCategories.length > 1 ? productCategories : availableCategories)
+    .slice(0, 3)
+    .map((category) => category.split('-').map((word) => `${word[0]?.toLocaleUpperCase('en-US') ?? ''}${word.slice(1)}`).join(' '));
   return {
     field: 'category',
     question: reason === 'empty'
       ? 'What kind of product should I focus on?'
       : 'Which product category should I focus on?',
-    options: categories.length > 1 ? categories : ['Laptops', 'Mens Shoes', 'Beauty'],
+    options: categories,
     reason,
   };
 }
@@ -51,8 +58,9 @@ function nextMissingQuestion(
   intent: ShoppingIntent,
   products: readonly RankedProduct[],
   reason: Clarification['reason'],
+  availableCategories: readonly string[],
 ): Clarification | undefined {
-  if (!supplied(intent.constraints, 'category')) return categoryQuestion(products, reason);
+  if (!supplied(intent.constraints, 'category')) return categoryQuestion(products, reason, availableCategories);
   if (!supplied(intent.constraints, 'maxPrice')) return priceQuestion(products, reason);
   if (!supplied(intent.constraints, 'minRating')) return ratingQuestion(reason);
   return {
@@ -71,13 +79,14 @@ function nextMissingQuestion(
 export function evaluateClarification(
   intent: ShoppingIntent,
   products: readonly RankedProduct[],
+  availableCategories: readonly string[] = [],
 ): Clarification | undefined {
   if (intent.status === 'needs_clarification') {
     if (products.length > 0 && supplied(intent.constraints, 'category')) return undefined;
-    return nextMissingQuestion(intent, products, 'requested');
+    return nextMissingQuestion(intent, products, 'requested', availableCategories);
   }
   if (products.length === 0) {
-    if (!supplied(intent.constraints, 'category')) return categoryQuestion(products, 'empty');
+    if (!supplied(intent.constraints, 'category')) return categoryQuestion(products, 'empty', availableCategories);
     return undefined;
   }
 
@@ -94,8 +103,8 @@ export function evaluateClarification(
   const categories = new Set(products.map(({ product }) => product.category));
   const broad = products.length >= 5 && categories.size >= 3;
   const split = products.length >= 4 && categories.size >= 2;
-  if (broad) return nextMissingQuestion(intent, products, 'broad');
-  if (split) return nextMissingQuestion(intent, products, 'split');
+  if (broad) return nextMissingQuestion(intent, products, 'broad', availableCategories);
+  if (split) return nextMissingQuestion(intent, products, 'split', availableCategories);
   return undefined;
 }
 

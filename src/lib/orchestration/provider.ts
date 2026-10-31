@@ -4,6 +4,7 @@ import { toProviderAgentError } from '../agent/errors';
 import { createProviderModel, type ModelFactory } from '../agent/model';
 import { isProviderConfigured, type Environment } from '../config/environment';
 import { INTENT_EXTRACTION_SYSTEM_PROMPT } from '../ai/prompts';
+import { summarizeIntentPlan, type IntentPlanSummary } from '../diagnostics/intent-plan-summary';
 import { extractedTurnPlanSchema, providerExtractedTurnPlanSchema, type IntentExtractor } from './contracts';
 
 type IntentPlanGenerationOptions = {
@@ -26,7 +27,10 @@ export type ProviderIntentExtractorOptions = {
   environment: Environment;
   generate?: IntentPlanGenerator;
   modelFactory?: ModelFactory;
+  observePlan?: (summary: IntentPlanSummary) => void;
 };
+
+const MAX_STRUCTURED_PLAN_ATTEMPTS = 3;
 
 async function defaultGenerate({ model, ...options }: IntentPlanGenerationOptions): Promise<unknown> {
   const result = await generateText({
@@ -60,25 +64,38 @@ export function createProviderIntentExtractor(options: ProviderIntentExtractorOp
 
   return async (context) => {
     try {
-      const generated = await generator({
-        model,
-        instructions: INTENT_EXTRACTION_SYSTEM_PROMPT,
-        prompt: JSON.stringify({
-          shopperPrompt: context.prompt,
-          previousIntents: context.previousIntents,
-        }),
-        maxRetries: 0,
-        providerOptions: {
-          openai: {
-            strictJsonSchema: options.environment.LLM_PROVIDER !== 'litellm',
-            ...(options.environment.LLM_PROVIDER === 'litellm' ? { reasoningEffort: 'none' as const } : {}),
-          },
-        },
-        ...(options.environment.LLM_PROVIDER === 'litellm' ? {
-          maxOutputTokens: 1000,
-        } : {}),
-      });
+      let generated: unknown;
+      for (let attempt = 1; attempt <= MAX_STRUCTURED_PLAN_ATTEMPTS; attempt += 1) {
+        try {
+          generated = await generator({
+            model,
+            instructions: INTENT_EXTRACTION_SYSTEM_PROMPT,
+            prompt: JSON.stringify({
+              shopperPrompt: context.prompt,
+              previousIntents: context.previousIntents,
+            }),
+            maxRetries: 0,
+            providerOptions: {
+              openai: {
+                strictJsonSchema: options.environment.LLM_PROVIDER !== 'litellm',
+                ...(options.environment.LLM_PROVIDER === 'litellm' ? { reasoningEffort: 'none' as const } : {}),
+              },
+            },
+            ...(options.environment.LLM_PROVIDER === 'litellm' ? {
+              maxOutputTokens: 1000,
+            } : {}),
+          });
+          break;
+        } catch (error) {
+          const providerError = toProviderAgentError(error);
+          if (providerError.code === 'invalid_tool_output' && attempt < MAX_STRUCTURED_PLAN_ATTEMPTS) continue;
+          throw providerError;
+        }
+      }
       const plan = extractedTurnPlanSchema.parse(generated);
+      const summary = summarizeIntentPlan(plan);
+      if (options.observePlan) options.observePlan(summary);
+      else if (process.env.NODE_ENV !== 'test') console.info('intent_plan_summary', JSON.stringify(summary));
       const previousIds = new Set(context.previousIntents.map(({ id }) => id));
       return {
         ...plan,

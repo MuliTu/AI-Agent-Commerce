@@ -348,7 +348,7 @@ test('clarification can refine the same intent without inventing products', asyn
   await page.getByLabel('Laptops').check();
   await expect(page.getByLabel('What are you shopping for?')).toHaveValue('Laptops');
   await page.getByRole('button', { name: 'Refine results' }).click();
-  await expect(page.getByText('I applied Laptops to Find a suitable gift.')).toBeVisible();
+  await expect(page.getByText('I searched the catalog for your shopping request.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Apple MacBook Pro 14 Inch Space Grey' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Dell Latitude 5440' })).toBeVisible();
   await expect(page.getByRole('heading', { name: /What kind of product/ })).toHaveCount(0);
@@ -659,8 +659,8 @@ test('new topics stay scoped to their own assistant turn across phone, flights, 
   await composer.fill('Find flights to Paris');
   await page.getByRole('button', { name: 'Refine results' }).click();
   const flightTurn = page.locator('.conversation-turn').last();
-  await expect(flightTurn).toContainText('flights are outside it');
-  await expect(flightTurn).toContainText('I can search products in this catalog, but I can’t search or book flights.');
+  await expect(flightTurn).toContainText('I focus on products in this catalog, so I can’t answer that request.');
+  await expect(flightTurn.getByText(/focus on products in this catalog/)).toHaveCount(1);
   await expect(flightTurn.getByRole('heading', { name: 'iPhone 15 Pro' })).toHaveCount(0);
 
   await composer.fill('Find perfume for everyday wear');
@@ -685,7 +685,7 @@ test('user messages align right and Bazak answers align left', async ({ page }) 
 
 test('prompt injection cannot create a product outside the trusted catalog', async ({ page }) => {
   await runExample(page, 'Injection defense');
-  await expect(page.getByText('ignored untrusted product claims')).toBeVisible();
+  await expect(page.getByText('I searched the catalog for your shopping request.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'iPhone 15 Pro' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Galaxy Ultra 999' })).toHaveCount(0);
   await expect(page.getByRole('list', { name: 'Product recommendations' })).toBeVisible();

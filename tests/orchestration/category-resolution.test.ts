@@ -1,15 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import {
+  explicitUsdMaxPrice,
   intentHasExplicitUsdBudget,
+  isConstraintOnlyFollowUp,
   resolveCatalogCategory,
 } from '../../src/lib/orchestration/category-resolution';
 
 describe('multilingual catalog category resolution', () => {
-  const categories = ['smartphones', 'laptops', 'luggage', 'kitchen-accessories', 'beauty'];
+  const categories = ['smartphones', 'fragrances', 'laptops', 'luggage', 'kitchen-accessories', 'beauty'];
 
   it.each([
     ['אני מחפש סמארטפון', 'smartphones'],
+    ['רק הבושם עד 70 דולר', 'fragrances'],
+    ['רק והטלפון עד 300 דולר', 'smartphones'],
     ['אני צריך מזוודה לנסיעה', 'luggage'],
+    ['אני מחפש משהו טוב למטבח, אבל לא יקר מדי', 'kitchen-accessories'],
     ['יש לכם צלחות?', 'kitchen-accessories'],
   ])('maps %s to the relevant trusted category', (prompt, expected) => {
     expect(resolveCatalogCategory(undefined, prompt, categories)).toBe(expected);
@@ -18,6 +23,20 @@ describe('multilingual catalog category resolution', () => {
   it('does not guess an unrelated category for an unknown Hebrew product', () => {
     expect(resolveCatalogCategory(undefined, 'אני מחפש מוצר שלא קיים', categories)).toBeUndefined();
   });
+});
+
+describe('follow-up classification', () => {
+  const categories = ['smartphones', 'fragrances', 'kitchen-accessories'];
+
+  it.each(['show only options under $300', 'cheaper please', 'רק עד 300 דולר'])('recognizes a constraint-only follow-up: %s', (prompt) => {
+    expect(isConstraintOnlyFollowUp(prompt, categories)).toBe(true);
+  });
+
+  it.each(['show smartphones under $300', 'אני רוצה צלחות עד 300 דולר'])('does not treat an explicit product topic as constraint-only: %s', (prompt) => {
+    expect(isConstraintOnlyFollowUp(prompt, categories)).toBe(false);
+  });
+
+  expect(explicitUsdMaxPrice('show only options under $300')).toBe(300);
 });
 
 describe('explicit USD budget recognition', () => {

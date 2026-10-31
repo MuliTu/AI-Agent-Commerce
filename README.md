@@ -29,6 +29,8 @@ The local testing branch also accepts `LLM_PROVIDER=litellm` with an explicitly 
 - A single shopper-facing agent uses structured model output to extract up to eight independent intents. The live path does **not** let the model call catalog tools directly: application code resolves categories, retrieves candidates, filters, ranks, persists, and renders them deterministically.
 - System prompts live in `src/lib/ai/prompts`; shopper text and prior intent state are separate typed data.
 - Explicit USD budgets, rating, stock, brand, category, and ordering constraints are scoped per intent. ILS/NIS/₪ budgets are not treated as USD.
+- Unsupported semantics such as brand exclusion, minimum prices, contradictory bounds, and shared multi-product budgets fail honestly instead of being silently inverted or discarded.
+- Explicit catalog-proof requests use a fail-closed evidence gate. Known capabilities use reviewed synonyms; unseen phrases such as “satellite calling” are extracted from proof language and matched only against trusted product title, description, or tags. Ordinary descriptive browsing remains ranking context rather than an automatic hard filter.
 - Product facts come only from schema-validated DummyJSON responses. Model text cannot introduce a product, product ID, HTML, or executable UI.
 - Conversations, messages, turns, intents, results, and product snapshots are written to SQLite before/after execution. Refresh, a second client using the conversation URL, and the saved-conversation list read that server state.
 - Accepted work continues in the current server process if the browser disconnects. A bounded status poll reconciles a client timeout with the persisted terminal result without submitting the operation twice.
@@ -49,6 +51,8 @@ The request path is:
 7. One terminal result and its ordered product snapshots are persisted, then returned as typed application-owned UI.
 
 Category-first retrieval was chosen because phrases such as “phone for photography” describe a use case, not necessarily a product title. Searching that full phrase first can incorrectly discard every smartphone. Ranking uses lexical overlap across trusted title, tags, category, brand, and description, blended with a bounded rating signal; explicit constraints remain hard filters.
+
+For explicit feature-proof requests, exact catalog evidence is deliberately stricter than general relevance. Curated capabilities can use reviewed synonyms, while an unseen feature uses conservative lexical evidence and returns an honest empty result when the catalog does not establish it. The rejected shortcut was treating semantic similarity as proof: “satellite SOS” may be related to “satellite calling” without proving voice-call support. A separate local experiment may evaluate model-assisted evidence verdicts in shadow mode, but it must preserve deterministic price/stock filters and require exact catalog evidence before any future hard-match decision.
 
 Two alternatives were rejected for this assignment:
 
@@ -81,6 +85,8 @@ npm start
 
 `npm run check` runs lint, generated Next.js route types, TypeScript, and Vitest unit/integration tests. The deterministic suites cover schema boundaries, ranking, category-first and multi-intent behavior, USD/ILS scoping, cheap sorting, five-item pagination, retry classification, persistence/idempotency, refresh/resume, timeout recovery, prompt injection, long conversations, and desktop/mobile layout.
 
+The evidence suite also contrasts explicit proof requirements, unseen feature phrases, positive trusted-text matches, ordinary descriptive browsing, multilingual/multi-intent scoping, and false-positive controls. The latest bounded live report is recorded under `outputs/QA_OPEN_VOCAB_LIVE_RETEST_REPORT_2026-10-31.md`; it is evidence for that sampled provider run, not a guarantee about every future model response.
+
 Playwright intercepts `/api/orchestrate` for deterministic browser journeys. That proves UI and recovery behavior, not the configured model provider or live DummyJSON availability. Provider-realistic checks are a separate, explicitly budgeted local review; credentials are not stored in the repository. Tests do not currently prove destructive database corruption recovery, real disk-full behavior, a full accessibility audit, distributed concurrency, or consistent quality across many live model samples.
 
 ## Original assignment versus project choices
@@ -96,6 +102,8 @@ Cart, checkout, authentication, deployment, and production job infrastructure ar
 > Candidate reflection for the submitter to review and personalize before delivery.
 
 I would first replace process-bound execution and local SQLite with a durable database and queued worker lease, because recovery at the browser’s 30-second boundary exposed how important authoritative job state is. Next I would add fault-injection tests for initial provider/catalog retries and persist every attempt, then run a small labeled relevance set across ambiguous, multi-intent, and empty-result prompts to tune ranking with evidence rather than intuition. Finally, I would run a full keyboard/screen-reader audit and add deployment-specific storage and observability checks. I would keep the catalog-first trust boundary and typed React rendering: those constraints prevented fabricated products even when the prompt asked for one.
+
+For semantic evidence, I would evaluate a separate model-assisted judge only after building a labelled set of supported, contradicted, and unknown claims. The judge would return exact catalog spans and confidence, but confidence or similarity alone would never count as proof. OpenAI and the existing local LiteLLM/Ollama-compatible route are both viable evaluation backends; the deterministic lexical gate remains the safe baseline and fallback.
 
 ## Conventions
 

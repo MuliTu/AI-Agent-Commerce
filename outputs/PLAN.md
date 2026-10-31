@@ -159,8 +159,37 @@ Any omitted or simplified item must be described plainly in the README.
 ## MYW-34 implementation slice
 
 1. Harden category resolution with Hebrew aliases and remove unrelated fallback behavior for unknown catalog categories.
-2. Localize deterministic orchestration feedback and require provider-facing response copy to follow the shopper language.
-3. Render unsupported and unknown catalog goals as compact prose while preserving supported sibling outcomes.
-4. Replace the empty chat message with the centered Bazak welcome/composer lifecycle; remove local-workspace profile chrome and strengthen Bazak identity.
-5. Standardize grid/card geometry across categories, including LTR catalog content inside RTL turns and bottom-pinned match reasoning.
-6. Verify exact Hebrew and English journeys, invalid choices, restore behavior, accessibility, reduced motion, desktop/mobile layout, static checks, unit/integration tests, build, and Playwright.
+2. Preserve same-conversation context for constraint-only follow-ups, deterministically repair a missing prior intent identity when only one current product topic is plausible, and clarify among only the plausible current topics when it is not.
+3. Make an explicit product topic change override stale or provider-suggested categories, including Hebrew kitchen-plate requests.
+4. Improve both central system prompts for follow-up context, topic switches, accurate empty results, and catalog-only boundaries.
+5. Localize deterministic orchestration feedback and require provider-facing response copy to follow the shopper language.
+6. Render unsupported and unknown catalog goals once as compact prose while preserving supported sibling outcomes; classify weather and other off-topic requests before catalog lookup.
+7. Describe valid zero-match searches as completed empty results with relevant category/filter recovery copy. A price picker remains discussion-only and is not implemented.
+8. Replace the empty chat message with the centered Bazak welcome/composer lifecycle; remove local-workspace profile chrome and strengthen Bazak identity.
+9. Standardize grid/card geometry across categories, including LTR catalog content inside RTL turns and bottom-pinned match reasoning.
+10. Verify exact Hebrew and English same-conversation journeys, explicit and ambiguous follow-ups, topic switches, off-topic and mixed requests, invalid choices, restore behavior, accessibility, reduced motion, desktop/mobile layout, static checks, unit/integration tests, build, and Playwright.
+
+## Live QA remediation slice
+
+Execute the five bounded tasks in `QA_REMEDIATION_TASKS_2026-10-30.md`, integrate them behind deterministic orchestration boundaries, run the full static/unit/browser gate, and hand the exact original scenarios plus 20 new creativity-rated cases to an independent live-provider QA run. Do not treat deterministic fixtures as live-model evidence.
+
+## October 31 evidence-grounding closure
+
+1. Keep deterministic price, stock, rating, category, and positive-brand constraints authoritative.
+2. Detect unsupported constraint semantics before provider planning and return issue-specific guidance.
+3. Scope explicit refinements and evidence requirements to the correct intent in English and Hebrew.
+4. Require trusted catalog evidence for reviewed and open-vocabulary explicit feature-proof requests; fail safely when evidence is absent or unresolved.
+5. Preserve ordinary descriptive browsing as soft ranking context.
+6. Verify deterministic unit/integration/browser gates and run bounded independent live matrices with positive, negative, unseen-feature, and regression controls.
+7. Record the final sampled provider evidence without claiming universal semantic coverage.
+
+## Local semantic-evidence experiment (separate branch, not submission baseline)
+
+1. Add a provider-neutral semantic evaluator interface and strict structured result schema: product ID, requirement, `supported | contradicted | unknown`, confidence, and exact catalog evidence.
+2. Insert the experiment after deterministic hard filtering and before final soft ranking. Never let the evaluator restore a product removed by price, stock, rating, category, or brand constraints.
+3. Run in shadow mode by default: record bounded diagnostics and disagreements while keeping baseline user-visible results unchanged.
+4. Reuse the existing OpenAI-compatible model factory for both hosted OpenAI and the local LiteLLM/Ollama route; do not add credentials or change persistent network configuration.
+5. Validate every returned evidence quote as an exact substring of trusted title, description, or tags. Treat confidence and similarity as advisory, never proof.
+6. Add deterministic evaluator fixtures for supported, contradicted, unknown, malformed output, provider failure, synonym ambiguity, and multi-intent isolation.
+7. If the local model is already reachable, run a bounded smoke evaluation and record the exact model/endpoint label without exposing credentials. Otherwise report the connection blocker and keep offline tests green.
+8. Compare precision-first hard-evidence behavior separately from soft reranking quality. Do not enable result-changing semantic decisions without labelled evaluation and explicit approval.

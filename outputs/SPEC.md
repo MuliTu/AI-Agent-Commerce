@@ -158,6 +158,10 @@ Internal diagnostics and demo affordances are not part of the shopper UI. The vi
 
 An unrelated new topic starts a new result scope instead of carrying forward prior products or filters. A genuine refinement may reference and update an existing intent. Requests outside the product catalog, including flight search or booking, receive an honest bounded response and never reuse old product results.
 
+Conversation context is evaluated across consecutive turns in the same conversation, not only within isolated test chats. A constraint-only follow-up such as “show only options under $300” refines the single relevant current product intent and preserves its category and applicable constraints even when the model omits the prior intent ID. If more than one current intent is a plausible target, the application asks which of those product topics the shopper means; it must not invent or fall back to unrelated categories. An explicitly named product type in a new turn is a topic switch and takes precedence over stale or model-suggested categories.
+
+Valid searches with zero matching products are successful empty results, not operational failures. Shopper copy identifies the applicable category and supplied filters when practical and suggests relaxing a relevant constraint. Unsupported requests render one concise catalog-only response per turn; the UI must not repeat the same refusal in both summary and outcome content. Weather, travel, general-knowledge, and other off-topic requests are classified before catalog lookup so provider prose cannot leak through as a generic failure or fabricated answer. Mixed turns continue supported product work and decline only the unsupported portion.
+
 Actual LLM system prompts live centrally in `src/lib/ai/prompts`, one prompt per file. The structured intent extractor receives the shopper text and previous intent state as a separate typed dynamic payload. Deterministic UI copy is not treated as a system prompt.
 
 ## 8. Persistence and execution semantics
@@ -200,6 +204,24 @@ Persist only what is necessary. Secrets, raw provider credentials, and unnecessa
 - Explicit constraints are enforced deterministically.
 - Recommendations are drawn only from the catalog and ranked for semantic relevance.
 - The agent asks a focused clarification only when it is materially useful.
+- A constraint-only follow-up preserves the single relevant current intent; an ambiguous follow-up asks about only the plausible current product topics.
+- A budget attached to multiple explicitly named product types without “each”, per-item amounts, or a combined-total marker is blocked before provider planning and asks which product owns the budget; it is never assigned according to provider guesswork.
+- Explicit product-topic changes discard stale category filters and never surface unrelated hard-coded category choices.
+- Empty filtered results are described accurately as no catalog matches, without implying provider or catalog failure.
+- Off-topic and mixed requests receive one friendly catalog-only response in the shopper's language, while supported sibling intents remain usable.
+- Brand exclusions, minimum-price bounds, contradictory price bounds and aggregate budgets must never be inverted, silently dropped or represented as supported per-item filters. The application asks a focused clarification or states the unsupported limitation.
+- Currency-qualified minimum-price phrases (including `at least $N`) and English/Hebrew aggregate-budget language are detected before provider planning. Unsupported-constraint guidance identifies the actual limitation instead of listing unrelated constraints.
+- Every explicitly named product type in an English or Hebrew multi-intent turn is represented once, or the turn fails safely rather than duplicating another category.
+- Explicit Hebrew follow-ups may use definite/conjoined forms such as `הבושם` or `והטלפון`; these forms target the matching current intent without an unnecessary ambiguity prompt.
+- An explicit exclusive follow-up such as “only the fragrance” / `רק הבושם` returns only that updated intent in the current result; an ordinary named refinement continues to preserve unchanged siblings.
+- Evidence requirements are scoped from the shopper's own category-specific segment, including Hebrew use-case wording, so provider paraphrasing cannot bypass evidence filtering.
+- Evidence disclaimers in contracted or uncontracted form (`doesn't mention`, `does not mention`, `not stated`, `not listed`, `not omitted`) never become brand exclusions; explicit named-brand exclusions remain unsupported.
+- Explicit catalog-proof requirements are open-vocabulary: a bounded feature phrase following proof language such as `state`, `mention`, `list`, `show`, `describe`, or `verified` must be established by trusted title, description, or tags. Unknown explicit features fail safely instead of returning category-wide products.
+- Ordinary product wording without an explicit proof requirement remains browsing/ranking context; the application does not promote every adjective into a hard evidence filter.
+- Intermittent provider structured-output validation failures receive a small bounded generation retry. Only a schema-valid plan may reach orchestration.
+- A category-free follow-up with multiple plausible prior intents asks which intent is meant even if the provider selected one prior intent ID; explicit single-target and explicit “both” refinements remain deterministic.
+- Products are presented as satisfying an arbitrary requested feature only when trusted title, description or tags contain evidence for that feature. Otherwise the result states that the catalog cannot verify it.
+- General-knowledge and arithmetic goals are treated as outside the product catalog, while an unknown or broad product request receives distinct product-focused clarification or unknown-category feedback.
 - Product results render through typed React components.
 - Refreshing or reconnecting from another client can recover server-persisted conversation state.
 - The project-authored reliability target is five total transient attempts; the current live initial-execution gap is documented and remains deferred.
@@ -241,7 +263,18 @@ Persist only what is necessary. Secrets, raw provider credentials, and unnecessa
 
 - Bazak responds in the shopper's language for Hebrew and English turns while trusted catalog product fields remain in their source language and render LTR inside RTL conversation chrome.
 - Every new turn starts a new intent scope unless it explicitly carries a validated clarification or retry identity from the previous result. Unknown categories fail honestly instead of falling back to an unrelated catalog category.
+- Deterministic follow-up repair may attach a constraint-only turn to the sole relevant previous product intent when the provider omits its ID. When several previous product intents are plausible, clarification options are derived from those intents or trusted catalog evidence, never from a fixed unrelated category list.
 - Unsupported services such as flights render as concise conversational prose; supported sibling product intents remain independently actionable.
+- Weather and other non-catalog questions use the same friendly catalog-only boundary. A refusal is rendered once, and mixed product/off-topic turns retain the supported product result.
+- Filtered searches that return no products name the empty match condition accurately (for example, no laptops under $800) and invite a relevant constraint change.
 - A genuinely empty conversation presents one centered Bazak welcome, genuine catalog categories/examples, and the primary composer. The welcome disappears after the first accepted send. Restored conversations skip it and use the normal sticky-bottom composer.
 - Product grids use the same responsive column policy and card anatomy for every category. Cards stretch without fixed clipping heights, preserve a stable media frame, and keep match reasoning at the bottom of the content column.
 - The application does not expose a local-workspace profile block. Motion is subtle, composite-only, and reduced under `prefers-reduced-motion`.
+
+### 15.1 Explicit non-goal
+
+A price-picker component is discussion-only and is not part of this implementation slice. Budget refinements continue through natural-language input and existing clarification controls.
+
+## 16. Live-provider QA remediation
+
+The confirmed scenarios in `QA_LIVE_AI_REPORT_2026-10-30.md` are release regressions. Acceptance requires deterministic coverage for each invariant and a separate opt-in live-provider replay. Provider-plan observability is bounded to structural summaries and must not persist credentials, authorization data, raw provider responses or catalog payloads.

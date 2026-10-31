@@ -24,6 +24,7 @@ function ranked(id: number, category: string, brand = `Brand ${id}`): RankedProd
 }
 
 describe('adaptive clarification policy', () => {
+  const catalogCategories = ['laptops', 'smartphones', 'fragrances'];
   it.each([
     ['one strong candidate', [ranked(1, 'laptops')]],
     ['several coherent candidates', [ranked(1, 'laptops', 'A'), ranked(2, 'laptops', 'B'), ranked(3, 'laptops', 'C')]],
@@ -36,10 +37,18 @@ describe('adaptive clarification policy', () => {
     ['broad', [ranked(1, 'laptops'), ranked(2, 'beauty'), ranked(3, 'shoes'), ranked(4, 'laptops'), ranked(5, 'beauty')], 'broad'],
     ['split', [ranked(1, 'laptops', 'A'), ranked(2, 'laptops', 'B'), ranked(3, 'shoes', 'C'), ranked(4, 'shoes', 'D')], 'split'],
   ] as const)('asks one category question for %s results', (_label, products, reason) => {
-    const clarification = evaluateClarification(intent(), products);
+    const clarification = evaluateClarification(intent(), products, catalogCategories);
     expect(clarification).toMatchObject({ field: 'category', reason });
     expect(clarification?.question).toMatch(/category|kind of product/i);
     expect(clarification?.options.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('uses trusted categories instead of unrelated hard-coded fallback choices', () => {
+    const clarification = evaluateClarification(intent({}, 'needs_clarification'), [], ['smartphones', 'fragrances']);
+
+    expect(clarification?.options).toEqual(['Smartphones', 'Fragrances']);
+    expect(clarification?.options).not.toContain('Laptops');
+    expect(clarification?.options).not.toContain('Beauty');
   });
 
   it('returns an honest empty result without entering a clarification loop for a known category', () => {

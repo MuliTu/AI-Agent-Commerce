@@ -18,6 +18,8 @@ This log records current decisions and proposals. “Accepted” means accepted 
 | D-10 | Staged delivery with README reflection | Accepted plan |
 | D-11 | Conversation-owned result groups and independent scroll regions | Accepted design |
 | D-12 | Central, one-file-per-system-prompt organization | Accepted design |
+| D-13 | Fail-closed open-vocabulary catalog evidence | Accepted and implemented |
+| D-14 | Model-assisted semantic evidence judge in shadow mode | Proposed experiment |
 
 ## D-01 — Use Next.js with TypeScript
 
@@ -144,6 +146,39 @@ This log records current decisions and proposals. “Accepted” means accepted 
 **Why:** Centralization makes prompt ownership explicit, prevents accidental duplication, and enables focused tests without coupling the UI to model instructions.
 
 **Trade-offs:** Dynamic shopper data and previous intents are still composed at the call site, where their typed runtime context belongs.
+
+## D-13 — Fail closed for explicit open-vocabulary evidence
+
+**Context:** A shopper may require proof of a feature that is absent from the reviewed vocabulary, such as satellite calling. Returning generic category products would imply unsupported facts; exact wording alone can miss unknown synonyms.
+
+**Decision:** Detect explicit proof language, extract a bounded feature phrase, and accept products only when trusted title, description, or tags contain catalog evidence. Keep reviewed synonyms for known features. If the feature or evidence cannot be resolved safely, return `unknown`/no verified products. Ordinary descriptive browsing remains soft ranking context.
+
+**Why:** The assignment values catalog grounding over recall. An honest false negative is safer and easier to defend than a fabricated feature match.
+
+**Alternatives considered:**
+
+1. Treat every adjective or use case as a hard filter. Rejected because it would over-block normal browsing and empty many useful category searches.
+2. Use fuzzy similarity as proof. Rejected because related text is not necessarily equivalent: satellite SOS does not establish satellite voice calling.
+3. Maintain only a fixed feature vocabulary. Retained as a high-quality fast path, but insufficient alone for unseen explicit proof requests.
+
+**Trade-offs:** Unknown synonyms can produce false negatives. Generic evidence extraction is intentionally lexical and conservative. Curated features retain broader reviewed synonyms.
+
+## D-14 — Experiment with a semantic evidence judge without replacing the baseline
+
+**Context:** Conservative lexical evidence may miss valid paraphrases. The repository already supports hosted OpenAI and a local LiteLLM-compatible Qwen/Ollama route.
+
+**Proposed decision:** On a separate local branch, evaluate a model-assisted evidence stage after deterministic hard filtering. The structured output must distinguish `supported`, `contradicted`, and `unknown`, include confidence, product ID, and exact trusted catalog evidence. Initially run it in shadow mode so baseline user-visible results do not change.
+
+**Why:** Shadow mode provides disagreement data and latency/reliability evidence without weakening the verified product boundary before submission.
+
+**Alternatives considered:**
+
+1. Replace deterministic ranking and filters with a model reranker. Rejected: price, stock, category, rating, and positive-brand rules must remain deterministic.
+2. Use embeddings alone. Rejected for hard proof because similarity cannot establish factual equivalence, though embeddings remain viable for soft ordering later.
+3. Call a model once per product. Rejected because it multiplies latency, cost, and failure surface; a bounded batch per intent is preferable.
+4. Enable the judge immediately in production results. Rejected until labelled evaluation demonstrates precision and exact-evidence validation.
+
+**Risks and gates:** Exact evidence spans must be verified against trusted fields; confidence is not proof; provider failure falls back to the lexical baseline; unknown fails closed for hard requirements. Local LiteLLM reduces external cost but may have weaker schema reliability and hardware-dependent latency. Hosted OpenAI may be more reliable but adds network latency and usage cost.
 
 ## Decisions still requiring evidence or confirmation
 

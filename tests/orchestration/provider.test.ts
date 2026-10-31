@@ -139,6 +139,38 @@ describe('provider-backed intent extraction', () => {
     })).rejects.toMatchObject({ code: 'invalid_plan' });
   });
 
+  it('regenerates an intermittently schema-invalid provider plan with a strict bound', async () => {
+    const generate = vi.fn()
+      .mockRejectedValueOnce(new AgentBoundaryError(
+        'invalid_tool_output', 'The model provider returned output that did not match the required schema.', false,
+      ))
+      .mockRejectedValueOnce(new AgentBoundaryError(
+        'invalid_tool_output', 'The model provider returned output that did not match the required schema.', false,
+      ))
+      .mockResolvedValueOnce({
+        intents: [{ goal: 'Phone', query: 'phone', constraints: { category: 'smartphones' } }],
+        response: 'I will search for a phone.',
+      });
+    const extractIntents = createProviderIntentExtractor({ environment, modelFactory, generate });
+
+    await expect(extractIntents({ prompt: 'Find a phone.', previousIntents: [] }))
+      .resolves.toMatchObject({ intents: [{ goal: 'Phone' }] });
+    expect(generate).toHaveBeenCalledTimes(3);
+  });
+
+  it('stops after three schema-invalid provider plans', async () => {
+    const generate = vi.fn(async () => {
+      throw new AgentBoundaryError(
+        'invalid_tool_output', 'The model provider returned output that did not match the required schema.', false,
+      );
+    });
+    const extractIntents = createProviderIntentExtractor({ environment, modelFactory, generate });
+
+    await expect(extractIntents({ prompt: 'Find a phone.', previousIntents: [] }))
+      .rejects.toMatchObject({ code: 'invalid_tool_output' });
+    expect(generate).toHaveBeenCalledTimes(3);
+  });
+
   it('preserves typed provider failures instead of relabeling them invalid_plan', async () => {
     const failure = new AgentBoundaryError(
       'provider_rate_limit', 'The model provider rate limit was reached.', true,

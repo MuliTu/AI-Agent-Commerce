@@ -32,8 +32,28 @@ This is a planned verification strategy; it does not assert that these tests or 
 - Convert one request into one intent.
 - Convert a combined request into distinct intents without losing shared context.
 - Preserve intent IDs and constraints across refinement turns.
+- In one persisted conversation, verify sequential smartphone and fragrance topic changes followed by a budget-only refinement; apply the budget to the sole current topic even when the provider omits its prior intent ID.
+- With multiple plausible current intents, verify a constraint-only follow-up asks which current product topic is meant and never offers unrelated fixed categories.
+- Verify an explicit topic switch, including Hebrew kitchen plates, overrides stale/provider-suggested categories and resolves only to trusted catalog taxonomy.
 - Allow ready intents to proceed while another awaits clarification.
 - Combine completed/failed intent states into correct turn status (`completed`, `partial`, or `failed`).
+- Treat a known-category filtered empty result as a completed empty search with accurate category/filter copy, not as catalog or provider failure.
+- Verify flight, weather, general-knowledge, and prompt-injection requests produce one friendly catalog-only response; mixed product/off-topic requests retain the product result and decline only the unsupported portion.
+- Reject or clarify brand exclusion, minimum-price language, contradictory price bounds and aggregate/combined budgets without silently converting them into supported positive/per-item constraints.
+- Block an unscoped budget attached to multiple product types before provider planning and ask which product owns it; retain explicit per-item and explicit combined-total controls.
+- Cover currency-qualified `at least $N`, Hebrew `יחד עד N דולר`, and issue-specific unsupported copy.
+- Validate natural English and Hebrew multi-intent plans against every explicitly named product category and reject duplicate-category loss.
+- Force ambiguous category-free follow-ups to clarification even when the provider supplies one prior intent ID; retain explicit product and explicit “both” controls.
+- Treat definite Hebrew category references such as `רק הבושם` as explicit targets.
+- Verify exclusive named follow-ups suppress unchanged sibling cards, while non-exclusive named refinements still preserve siblings.
+- Contrast true brand exclusion with `not stated`, `does not mention`, and `do not guess`; contrast `more than` with `no more than`.
+- Cover base and inflected evidence verbs after `not` (`mention/mentioned`, `state/stated`, `list/listed`, `omit/omitted`) against `not Samsung`, `anything but Apple`, and `except Google` controls.
+- Cover previously unseen explicit feature phrases with active, passive, and pronoun-based evidence clauses; include an evidence-backed positive product and an evidence-absent empty result.
+- Confirm ordinary browsing (`phone with a long battery`, generic category search) is not over-constrained, while curated known-feature synonyms still match trusted text.
+- Repeat Hebrew evening-fragrance extraction with varying provider goal/query wording and require identical evidence filtering.
+- Simulate intermittent provider structured-output rejection and verify bounded retry configuration without accepting malformed plans.
+- Require positive trusted catalog evidence for arbitrary requested features; otherwise return no verified match.
+- Distinguish pure and mixed general-knowledge/arithmetic goals from unknown or broad product-category requests.
 
 ### Adaptive clarification
 

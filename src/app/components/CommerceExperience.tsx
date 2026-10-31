@@ -71,7 +71,7 @@ type ResultBlocksProps = {
   locale: Locale;
 };
 
-function ResultBlocks({ result, actionable, pending, retryingIntentId, selectedClarification, completedClarifications, onClarification, onRetry, locale }: ResultBlocksProps) {
+export function ResultBlocks({ result, actionable, pending, retryingIntentId, selectedClarification, completedClarifications, onClarification, onRetry, locale }: ResultBlocksProps) {
   const grouped = result.outcomes.length > 1;
   const isHebrew = locale === 'he';
   return <div className={`intent-list ${grouped ? 'intent-list--grouped' : 'intent-list--single'}`} aria-label={grouped ? 'Shopping goals' : undefined}>
@@ -88,8 +88,10 @@ function ResultBlocks({ result, actionable, pending, retryingIntentId, selectedC
         return <ClarificationPrompt key={outcome.intent.id} name={outcome.intent.id} question={clarificationQuestion(clarification.field, clarification.question, locale)} options={clarification.options} empty={clarification.reason === 'empty'} selected={actionable ? selectedClarification : ''} disabled={!actionable || pending} locale={locale} onSelect={(option) => onClarification(outcome.intent.id, outcome.intent.goal, clarification.field, option)} />;
       }
       if (outcome.intent.status === 'failed') {
-        if (outcome.error?.code === 'outside_product_catalog' || outcome.error?.code === 'unknown_catalog_category') {
-          return <p className="unsupported-goal" key={outcome.intent.id}>{outcome.error.message}</p>;
+        if (outcome.error?.code === 'outside_product_catalog'
+          || outcome.error?.code === 'unknown_catalog_category'
+          || outcome.error?.code === 'unsupported_constraint') {
+          return null;
         }
         const retrying = actionable && retryingIntentId === outcome.intent.id;
         return <IntentSection key={outcome.intent.id} title={outcome.intent.goal} summary={isHebrew ? (grouped ? 'שאר תוצאות החיפוש נשארות זמינות.' : 'שמרתי את הבקשה ללא שינוי כדי שאפשר יהיה לנסות שוב.') : (grouped ? 'Your other shopping goals are still available.' : 'I kept your request unchanged so you can try again.')} status="failed" grouped={grouped} locale={locale}>
@@ -98,7 +100,12 @@ function ResultBlocks({ result, actionable, pending, retryingIntentId, selectedC
         </IntentSection>;
       }
       if (outcome.products.length === 0) {
-        return <IntentSection key={outcome.intent.id} title={outcome.intent.goal} summary={isHebrew ? 'שמרתי את כל התנאים שסיפקת.' : 'I kept every constraint you provided.'} status="empty" grouped={grouped} locale={locale}><RecommendationState state="empty" title={isHebrew ? 'לא מצאתי התאמה מאומתת בקטלוג' : 'I couldn’t find a trusted catalog match'} description={isHebrew ? 'אפשר לשנות תנאי אחד ואחפש שוב. לא אמציא מוצרים כדי למלא תוצאה ריקה.' : 'Try changing one constraint and I’ll search again. I won’t invent products to fill an empty result.'} /></IntentSection>;
+        const category = outcome.intent.constraints.category?.replace(/-/g, ' ');
+        const budget = outcome.intent.constraints.maxPrice;
+        const filterSummary = category && budget !== undefined
+          ? (isHebrew ? `${category} עד $${budget}` : `${category} under $${budget}`)
+          : category ?? (budget !== undefined ? (isHebrew ? `מוצרים עד $${budget}` : `products under $${budget}`) : '');
+        return <IntentSection key={outcome.intent.id} title={outcome.intent.goal} summary={isHebrew ? 'החיפוש הושלם וכל התנאים שסיפקת נשמרו.' : 'The search completed with every constraint you provided.'} status="empty" grouped={grouped} locale={locale}><RecommendationState state="empty" title={isHebrew ? `אין בקטלוג התאמות${filterSummary ? ` עבור ${filterSummary}` : ''}` : `No catalog products match${filterSummary ? ` ${filterSummary}` : ' these filters'}`} description={isHebrew ? 'אפשר להעלות את התקציב או לשנות תנאי אחר ואחפש שוב.' : 'Try raising the budget or relaxing another filter, and I’ll search again.'} /></IntentSection>;
       }
       return <IntentSection key={outcome.intent.id} title={outcome.intent.goal} summary={isHebrew ? `מצאתי ${outcome.products.length} אפשרויות מאומתות מהקטלוג, לפי מידת ההתאמה.` : `I found ${outcome.products.length} catalog-backed option${outcome.products.length === 1 ? '' : 's'}, ordered by match.`} status="completed" grouped={grouped} locale={locale}><PaginatedProductResults outcome={outcome} locale={locale} /></IntentSection>;
     })}
