@@ -26,9 +26,15 @@ function plan(context: IntentExtractionContext) {
     });
   }
   if (!prompt.includes('three intents') && (prompt.includes('perfume') || prompt.includes('fragrance'))) {
+    const maxPrice = Number(prompt.match(/\$?([0-9]{2,5})/)?.[1]);
     return extractedTurnPlanSchema.parse({
       response: 'I started a new fragrance search.',
-      intents: [{ goal: 'Find an everyday fragrance', query: 'everyday fragrance', constraints: { category: 'fragrances' }, status: 'ready' }],
+      intents: [{
+        goal: Number.isFinite(maxPrice) ? `Find an everyday fragrance under $${maxPrice}` : 'Find an everyday fragrance',
+        query: 'everyday fragrance',
+        constraints: { category: 'fragrances', ...(Number.isFinite(maxPrice) ? { maxPrice } : {}) },
+        status: 'ready',
+      }],
     });
   }
   if (prior && /(under|below|less than|cheaper|lower price|budget)/.test(prompt)) {
