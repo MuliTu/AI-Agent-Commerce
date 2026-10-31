@@ -159,6 +159,31 @@ export const migrations: readonly Migration[] = [
       CREATE INDEX idx_product_snapshots_turn ON product_snapshots(turn_id, created_at, id);
     `,
   },
+  {
+    version: 6,
+    sql: `
+      CREATE TABLE IF NOT EXISTS conversation_state (
+        conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+        revision INTEGER NOT NULL CHECK (revision > 0),
+        state_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
+
+      CREATE TABLE IF NOT EXISTS decision_events (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        turn_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL CHECK (sequence >= 0),
+        stage TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(turn_id, conversation_id) REFERENCES turns(id, conversation_id) ON DELETE CASCADE,
+        UNIQUE(turn_id, sequence)
+      ) STRICT;
+
+      CREATE INDEX IF NOT EXISTS idx_decision_events_turn_order ON decision_events(turn_id, sequence);
+    `,
+  },
 ] as const;
 
 export function applyMigrations(database: DatabaseSync): void {

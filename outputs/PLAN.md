@@ -236,3 +236,15 @@ Execute the five bounded tasks in `QA_REMEDIATION_TASKS_2026-10-30.md`, integrat
 - The evaluator observes only bounded post-filter candidates and cannot restore a product removed by deterministic constraints.
 - Any local LiteLLM/Ollama smoke run reports availability and behavior without changing credentials or persistent configuration.
 - A local commit records the experiment; no remote branch, merge, or deployment occurs.
+
+## Versioned conversation-memory remediation
+
+1. Add an additive SQLite migration for versioned conversation state and bounded decision events; do not rewrite existing rows.
+2. Centralize context projection so runtime context comes from server persistence rather than the client-supplied `previous` payload.
+3. Persist explicit add/replace/refine/clarify/select-product transitions and an unambiguous focus in the same completion transaction.
+4. Resolve displayed ordinals from stored result order; bypass the LLM for selection-only turns, validate and enforce the referenced intent/category for compound turns, and treat comparative `cheaper` as a strict saved-price boundary while leaving generic `cheap` as sorting only.
+5. Make explicit price ordering authoritative through semantic reranking without inventing a new budget.
+6. Persist catalog tool input summaries and returned product IDs, with no raw provider or secret-bearing payloads.
+7. Verify migration compatibility, restart recovery, idempotent retry, additive multi-intent behavior, ordinal selection, price order, static checks, build and browser regression gates.
+
+**Rollback boundary:** v5 rejects an applied migration marker it does not know, so code rollback is not automatic. Stop all application writers, back up the SQLite file, and transactionally delete only `schema_migrations.version = 6`; retain both additive tables and every row. The v5 application then starts while ignoring the retained tables. Migration 6 uses `IF NOT EXISTS`, so roll-forward records the marker again without replacing state or decision data. This procedure is covered by a rollback/roll-forward repository test.

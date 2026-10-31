@@ -5,17 +5,34 @@ import type { ClarificationAnswer } from '../orchestration/contracts';
 import { OrchestrationError } from '../orchestration/orchestrator';
 import { PersistenceConflictError, type CommerceRepository } from '../persistence';
 import type { ConversationState } from '../orchestration/http';
+import { buildConversationContext, nextConversationMemoryState } from './conversation-context';
+import type { OrchestrationDecisionDiagnostic } from '../diagnostics/server-trace';
 
-export type RunOrchestration = (input: {
+type BoundedDisplayedProductReference = {
+  intentId: string;
+  position: number;
+  product: {
+    id: number;
+    title: string;
+    price: number;
+    category: string;
+  };
+};
+
+type RunInput = {
   turnId: string;
   conversationId: string;
   prompt: string;
   previous?: OrchestrationResult;
   retryIntentId?: string;
   clarification?: ClarificationAnswer;
-}) => Promise<OrchestrationResult>;
+  displayedProductReference?: BoundedDisplayedProductReference;
+  observeDecision?: (event: OrchestrationDecisionDiagnostic) => void;
+};
 
-type ExecuteInput = Parameters<RunOrchestration>[0];
+export type RunOrchestration = (input: RunInput) => Promise<OrchestrationResult>;
+
+type ExecuteInput = Omit<RunInput, 'observeDecision'>;
 
 export class ConversationNotFoundError extends Error {
   constructor(conversationId: string) {
@@ -62,6 +79,8 @@ export class ConversationExecutionService {
     fingerprint: string;
     promise: Promise<OrchestrationResult>;
   }>();
+
+  private readonly conversationTails = new Map<string, Promise<void>>();
 
   constructor(
     private readonly repository: CommerceRepository,
@@ -164,9 +183,19 @@ export class ConversationExecutionService {
       return Promise.reject(new Error('This turn is already running in another request.'));
     }
 
-    const promise = this.runAccepted(input);
+    const prior = this.conversationTails.get(input.conversationId);
+    const promise = prior
+      ? prior.catch(() => undefined).then(() => this.runAccepted(input))
+      : this.runAccepted(input);
+    const tail = promise.then(() => undefined, () => undefined);
+    this.conversationTails.set(input.conversationId, tail);
     this.inFlight.set(input.turnId, { fingerprint, promise });
-    void promise.finally(() => this.inFlight.delete(input.turnId)).catch(() => undefined);
+    void promise.finally(() => {
+      this.inFlight.delete(input.turnId);
+      if (this.conversationTails.get(input.conversationId) === tail) {
+        this.conversationTails.delete(input.conversationId);
+      }
+    }).catch(() => undefined);
     return promise;
   }
 
@@ -176,11 +205,87 @@ export class ConversationExecutionService {
       const previous = this.repository.listTurns(input.conversationId)
         .filter(({ id, result: persistedResult }) => id !== input.turnId && persistedResult !== undefined)
         .at(-1)?.result;
-      const result = await this.run({ ...input, previous });
+      const persistedState = this.repository.getConversationState(input.conversationId);
+      const context = buildConversationContext({
+        prompt: input.prompt,
+        persistedState,
+        latestCompletedResult: previous,
+      });
+      const observedDecisions: OrchestrationDecisionDiagnostic[] = [];
+      const result = context.displayedProductReference?.selectionOnly
+        ? { ...context.displayedProductReference.result, turnId: input.turnId }
+        : await this.run({
+            ...input,
+            previous: context.previous,
+            ...(context.displayedProductReference ? {
+              displayedProductReference: {
+                intentId: context.displayedProductReference.intentId,
+                position: context.displayedProductReference.position,
+                product: context.displayedProductReference.product,
+              },
+            } : {}),
+            observeDecision: (event) => observedDecisions.push(event),
+          });
       if (result.status === 'queued' || result.status === 'running') {
         throw new Error('The orchestration runner returned a non-terminal result.');
       }
       const completedAt = this.now();
+      const conversationState = nextConversationMemoryState({
+        conversationId: input.conversationId,
+        turnId: input.turnId,
+        completedAt,
+        context,
+        result,
+      });
+      const catalogSearches = observedDecisions.filter(
+        (event): event is Extract<OrchestrationDecisionDiagnostic, { stage: 'catalog_search' }> =>
+          event.stage === 'catalog_search',
+      );
+      const toolRuns = catalogSearches.map((event, index) => {
+        const outcome = result.outcomes.find(({ intent }) => intent.id === event.intentId);
+        return {
+          id: `${input.turnId}:catalog:${index}`,
+          turnId: input.turnId,
+          intentId: event.intentId,
+          toolName: event.category ? 'listCategoryProducts' : 'searchCatalog',
+          attempt: 1,
+          input: event.category ? { category: event.category, filters: event.filters } : { filters: event.filters },
+          outputReference: { productIds: outcome?.products.map(({ product }) => product.id) ?? [] },
+          ...(outcome?.error ? { errorCode: outcome.error.code } : {}),
+          startedAt: completedAt,
+          completedAt,
+        };
+      });
+      const decisionEvents = [
+        {
+          stage: 'context_built',
+          payload: {
+            stateRevision: context.stateRevision,
+            previousTurnId: context.previous?.turnId,
+            previousIntentIds: context.previous?.outcomes.map(({ intent }) => intent.id) ?? [],
+            currentFocusIntentId: context.currentFocusIntentId,
+            selectedDisplayedPosition: context.displayedProductReference?.position,
+          },
+        },
+        ...observedDecisions.map((event) => ({ stage: event.stage, payload: event })),
+        {
+          stage: 'state_transition',
+          payload: {
+            operation: conversationState.lastOperation,
+            revision: conversationState.revision,
+            currentFocusIntentId: conversationState.currentFocusIntentId,
+            activeIntentIds: conversationState.activeResult?.outcomes.map(({ intent }) => intent.id) ?? [],
+          },
+        },
+      ].map(({ stage, payload }, sequence) => ({
+        id: `${input.turnId}:decision:${sequence}`,
+        conversationId: input.conversationId,
+        turnId: input.turnId,
+        sequence,
+        stage,
+        payload,
+        createdAt: completedAt,
+      }));
       this.repository.completeTurn({
         turnId: input.turnId,
         status: result.status,
@@ -203,7 +308,7 @@ export class ConversationExecutionService {
           constraints: intent.constraints,
           status: intent.status,
         })),
-        toolRuns: [],
+        toolRuns,
         productSnapshots: result.outcomes
           .filter(({ products }) => products.length > 0)
           .map(({ intent, products }) => ({
@@ -213,6 +318,8 @@ export class ConversationExecutionService {
             products: products.map(({ product }) => product),
             createdAt: completedAt,
           })),
+        conversationState,
+        decisionEvents,
         result,
       });
       return result;

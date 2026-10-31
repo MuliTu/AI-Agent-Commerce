@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { productSchema, type Constraints, type ShoppingIntent, type TurnStatus } from '../domain/contracts';
+import { productSchema, type Constraints, type Product, type ShoppingIntent, type TurnStatus } from '../domain/contracts';
 import type { RankedProduct } from '../ranking';
 import type { SemanticProductRelevance } from './semantic-evidence';
 
@@ -144,6 +144,11 @@ export type OrchestrationResult = {
 
 export type IntentExtractionContext = {
   prompt: string;
+  displayedProductReference?: {
+    intentId: string;
+    position: number;
+    product: Pick<Product, 'id' | 'title' | 'price' | 'category'>;
+  };
   previousIntents: Array<{
     id: string;
     goal: string;

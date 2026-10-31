@@ -276,6 +276,16 @@ Persist only what is necessary. Secrets, raw provider credentials, and unnecessa
 
 A price-picker component is discussion-only and is not part of this implementation slice. Budget refinements continue through natural-language input and existing clarification controls.
 
+## 15.2 Versioned conversation memory
+
+- Every terminal turn advances one server-owned `conversation_state` revision in the same SQLite transaction as messages, intents, tool references, product snapshots and `result_json`.
+- The projection contains at most eight active structured outcomes, an unambiguous current focus, the last operation (`add`, `replace`, `refine`, `clarify`, or `select_product`), the last turn ID and update time. When the bound is exceeded, the oldest active outcomes leave model context but remain in immutable turn history.
+- Existing conversations remain readable without backfill. Their latest completed `result_json` is the compatibility source until the next successful turn creates revision 1.
+- LLM context remains bounded to the current prompt and active structured intents; full transcript replay is not introduced.
+- Ordinal references are resolved against persisted displayed order when a single product group makes the reference deterministic. Selection-only requests bypass the model. For compound cheaper/USD-budget or separately named-product requests, the application validates the bounded product reference and deterministically enforces the prior intent/category after planning; additive product clauses preserve the exact selected product. Comparative “cheaper” with a selected product excludes that product and all equal-or-higher-priced results; generic “cheap” without a selected baseline only sorts ascending. The application never asks the model to invent a product ID.
+- Explicit price ordering is authoritative over semantic relevance ordering. `Cheaper` does not invent an unstated price ceiling.
+- Bounded decision events and catalog tool references are persisted without credentials, provider envelopes or catalog descriptions.
+
 ## 16. Live-provider QA remediation
 
 The confirmed scenarios in `QA_LIVE_AI_REPORT_2026-10-30.md` are release regressions. Acceptance requires deterministic coverage for each invariant and a separate opt-in live-provider replay. Provider-plan observability is bounded to structural summaries and must not persist credentials, authorization data, raw provider responses or catalog payloads. Opt-in server diagnostics use one hashed correlation key per conversation/turn and structured stages for request receipt, interpreted plan, follow-up targeting, search constraints, result summaries and errors. Summary mode logs no raw shopper prompt or product titles. Verbose prompt/title content is bounded, development-only, disabled by default and documented explicitly.

@@ -203,6 +203,48 @@ This log records current decisions and proposals. “Accepted” means accepted 
 
 **Why this branch is separate:** The committed baseline already has independently verified fail-closed behavior. The visible reranker needs labelled live QA before it can be considered for the submission or production path.
 
+## D-15 — Persist a versioned projection instead of replaying the transcript
+
+**Decision:** Store a compact `conversation_state` projection and advance its revision atomically with each completed turn. Build model context from the current prompt and active intents, while retaining displayed result order for deterministic references.
+
+**Why:** Full transcript replay increases tokens and leaves business state implicit. Deriving everything from the latest UI message loses focus, active siblings and displayed-product identity. A projection makes these contracts explicit without replacing the append-only turn history.
+
+**Alternatives considered:**
+
+1. Send all messages to the LLM. Rejected because cost grows with conversation length and product references remain probabilistic.
+2. Make `product_snapshots` alone the state source. Rejected because snapshots do not encode intent lifecycle, focus or transition semantics.
+3. Destructively backfill or rewrite old turns. Rejected because existing conversations must remain untouched.
+
+**Migration and concurrency:** Migration 6 only adds tables. Old conversations lazily create revision 1 after their next completed turn. Turns are serialized per conversation before reading state, so two accepted turns cannot both plan from the same revision. Different conversations remain independent.
+
+**Rollback procedure:** A pre-v6 binary rejects migration marker 6. Stop writers and back up the database, then delete only the version-6 marker inside `BEGIN IMMEDIATE`/`COMMIT`; do not drop or clear the new tables. The v5 binary ignores the retained additive tables. Because migration 6 uses `IF NOT EXISTS`, rolling forward preserves their rows and restores the marker. Automatic code-only rollback without this marker step is unsupported.
+
+## D-16 — Resolve deterministic product references before model planning
+
+**Decision:** Resolve “first/second/third one” against persisted displayed order when exactly one result group is in scope. A selection-only turn is completed deterministically as `select_product`. For a compound turn, pass only the resolved product's ID, title, price, category, position and prior intent ID to the bounded planner context, then validate that reference against persisted results and enforce the target intent/category in application code. Explicit cheaper and USD-budget clauses are applied deterministically; a separately named product category is searched while the exact selected product is preserved.
+
+**Why:** Product IDs and order are application facts. Asking the model to reconstruct them from prose is unnecessary and unsafe.
+
+**Alternative:** Give the full catalog result set to the planning model. Rejected because it increases tokens and permits hallucinated or reordered IDs. The compound-turn exception is one application-resolved product record, not a result replay. Ambiguous multi-group references remain unresolved rather than guessed.
+
+## D-17 — Price intent outranks semantic relevance
+
+**Decision:** When the shopper asks for `cheap`, `cheaper` or `cheapest`, deterministic price ascending is the primary order, including after semantic evaluation. No lower ceiling is invented without an explicit budget.
+
+**Why:** Relevance-tier ordering could make a more expensive item appear first and make a valid cheaper request look unchanged. Inventing a maximum price imposes a preference the shopper did not state.
+
+**Selected-product comparison:** When “cheaper” explicitly refers to a deterministically resolved displayed product, its persisted price is an observed comparison baseline rather than an invented budget. Results must be strictly below that price and exclude the selected product; an existing or explicit tighter maximum still applies. Generic “cheap” without a selected baseline remains price ordering only.
+
+**Alternative:** Exclude all previously displayed products or derive a budget from their median. Rejected because both rules are surprising and can hide the only valid products.
+
+## D-18 — Persist bounded decision and tool references
+
+**Decision:** Persist context/state-transition events and catalog tool summaries with product ID references. Do not persist raw provider envelopes, credentials or catalog descriptions.
+
+**Why:** Opt-in console logs alone cannot reconstruct a request after the process exits. Bounded records provide auditability without turning diagnostics into a sensitive transcript store.
+
+**Limitation:** These records cover application catalog operations and state transitions, not every internal provider SDK event.
+
 ## Decisions still requiring evidence or confirmation
 
 - Whether server-side persistence is mandatory, optional, or outside scope

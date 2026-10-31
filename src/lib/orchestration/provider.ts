@@ -73,6 +73,7 @@ export function createProviderIntentExtractor(options: ProviderIntentExtractorOp
             prompt: JSON.stringify({
               shopperPrompt: context.prompt,
               previousIntents: context.previousIntents,
+              displayedProductReference: context.displayedProductReference ?? null,
             }),
             maxRetries: 0,
             providerOptions: {

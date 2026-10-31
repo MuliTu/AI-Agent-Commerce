@@ -1,10 +1,12 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   applyMigrations,
   CommerceRepository,
+  migrations,
   PersistenceConflictError,
   type CompleteTurnInput,
   type ConversationRecord,
@@ -28,6 +30,28 @@ const conversation: ConversationRecord = {
   createdAt: '2026-10-28T10:00:00.000Z',
   updatedAt: '2026-10-28T10:00:00.000Z',
 };
+
+function applyLegacyV5Migrations(database: DatabaseSync): void {
+  const legacyMigrations = migrations.filter(({ version }) => version <= 5);
+  const supported = new Set(legacyMigrations.map(({ version }) => version));
+  const applied = database.prepare('SELECT version FROM schema_migrations ORDER BY version').all()
+    .map(({ version }) => Number(version));
+  const unsupported = applied.filter((version) => !supported.has(version));
+  if (unsupported.length > 0) throw new Error(`Database schema is newer than this application: ${unsupported.join(', ')}`);
+  for (const migration of legacyMigrations) {
+    if (applied.includes(migration.version)) continue;
+    database.exec('BEGIN IMMEDIATE');
+    try {
+      database.exec(migration.sql);
+      database.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
+        .run(migration.version, '2026-10-28T10:03:00.000Z');
+      database.exec('COMMIT');
+    } catch (error) {
+      database.exec('ROLLBACK');
+      throw error;
+    }
+  }
+}
 
 const turn: TurnRecord = {
   id: 'turn-1',
@@ -135,7 +159,97 @@ describe('CommerceRepository', () => {
     repository = new CommerceRepository(databasePath);
 
     expect(repository.database.prepare('SELECT version FROM schema_migrations ORDER BY version').all())
-      .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }]);
+      .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }]);
+  });
+
+  it('upgrades a version-5 database without rewriting existing conversation data', () => {
+    repository.close();
+    rmSync(databasePath, { force: true });
+    const legacy = new DatabaseSync(databasePath, { enableForeignKeyConstraints: true });
+    legacy.exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL) STRICT;`);
+    for (const migration of migrations.filter(({ version }) => version <= 5)) {
+      legacy.exec(migration.sql);
+      legacy.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
+        .run(migration.version, '2026-10-28T09:00:00.000Z');
+    }
+    legacy.prepare('INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)')
+      .run('legacy', 'Existing conversation', 'before', 'before');
+    legacy.close();
+
+    repository = new CommerceRepository(databasePath);
+
+    expect(repository.getConversation('legacy')).toMatchObject({ id: 'legacy', title: 'Existing conversation' });
+    expect(repository.getConversationState('legacy')).toBeUndefined();
+    expect(repository.database.prepare('SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1').get())
+      .toEqual({ version: 6 });
+  });
+
+  it('persists versioned conversation state and decision events atomically with completion', () => {
+    seedTurn();
+    const activeResult = {
+      turnId: turn.id,
+      status: 'completed' as const,
+      response: 'Found one.',
+      outcomes: [{
+        intent: { id: 'intent-laptop', goal: 'Find a laptop', query: 'laptop', constraints: {}, status: 'completed' as const },
+        products: [],
+      }],
+    };
+    repository.completeTurn(completion({
+      result: activeResult,
+      conversationState: {
+        conversationId: conversation.id,
+        revision: 1,
+        activeResult,
+        currentFocusIntentId: 'intent-laptop',
+        lastOperation: 'add',
+        lastTurnId: turn.id,
+        updatedAt: '2026-10-28T10:02:00.000Z',
+      },
+      decisionEvents: [{
+        id: 'decision-1', conversationId: conversation.id, turnId: turn.id, sequence: 0,
+        stage: 'state_transition', payload: { operation: 'add' }, createdAt: '2026-10-28T10:02:00.000Z',
+      }],
+    }));
+
+    expect(repository.getConversationState(conversation.id)).toMatchObject({
+      revision: 1, currentFocusIntentId: 'intent-laptop', lastOperation: 'add',
+    });
+    expect(repository.listDecisionEvents(turn.id)).toMatchObject([{
+      sequence: 0, stage: 'state_transition', payload: { operation: 'add' },
+    }]);
+  });
+
+  it('supports the documented non-destructive code rollback marker and later roll-forward', () => {
+    repository.createConversation(conversation);
+    const state = {
+      conversationId: conversation.id,
+      revision: 1,
+      lastOperation: 'add',
+      lastTurnId: 'turn-before-rollback',
+      updatedAt: '2026-10-28T10:02:00.000Z',
+    };
+    repository.database.prepare(`
+      INSERT INTO conversation_state (conversation_id, revision, state_json, updated_at)
+      VALUES (?, ?, ?, ?)
+    `).run(conversation.id, 1, JSON.stringify(state), state.updatedAt);
+    repository.close();
+
+    const rollback = new DatabaseSync(databasePath, { enableForeignKeyConstraints: true });
+    expect(() => applyLegacyV5Migrations(rollback)).toThrow(/newer than this application: 6/);
+    rollback.exec('BEGIN IMMEDIATE');
+    rollback.prepare('DELETE FROM schema_migrations WHERE version = ?').run(6);
+    rollback.exec('COMMIT');
+    expect(rollback.prepare('SELECT version FROM schema_migrations WHERE version > 5').all()).toEqual([]);
+    expect(() => applyLegacyV5Migrations(rollback)).not.toThrow();
+    expect(rollback.prepare('SELECT state_json FROM conversation_state WHERE conversation_id = ?').get(conversation.id))
+      .toBeDefined();
+    rollback.close();
+
+    repository = new CommerceRepository(databasePath);
+    expect(repository.getConversationState(conversation.id)).toEqual(state);
+    expect(repository.database.prepare('SELECT version FROM schema_migrations WHERE version = 6').get())
+      .toEqual({ version: 6 });
   });
 
   it('round-trips conversations, messages, turns, intents, tools, and snapshots in stable order', () => {

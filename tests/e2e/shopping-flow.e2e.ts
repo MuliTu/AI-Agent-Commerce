@@ -315,7 +315,7 @@ test('multi-intent request keeps each goal separate', async ({ page }) => {
   await expect(page.getByLabel('Shopping goals').locator('.intent')).toHaveCount(2);
 });
 
-test('an additive perfume turn displays both the preserved phone and new budgeted fragrance groups', async ({ page }) => {
+test('an additive perfume turn displays both groups and a later cheaper request asks which group', async ({ page }) => {
   const prompt = page.getByLabel('What are you shopping for?');
   await prompt.fill('Find a smartphone');
   await page.getByRole('button', { name: 'Find products' }).click();
@@ -331,6 +331,13 @@ test('an additive perfume turn displays both the preserved phone and new budgete
   await expect(groups.nth(0).getByRole('heading', { name: 'iPhone 15 Pro' })).toBeVisible();
   await expect(groups.nth(1)).toContainText('Find an everyday fragrance under $100');
   await expect(groups.nth(1).getByRole('heading', { name: 'Calvin Klein CK One' })).toBeVisible();
+
+  await prompt.fill('Show me cheaper options');
+  await page.getByRole('button', { name: 'Refine results' }).click();
+  const cheaperTurn = page.locator('.conversation-turn').last();
+  await expect(cheaperTurn.getByRole('heading', { name: 'Which product category should I focus on?' })).toBeVisible();
+  await expect(cheaperTurn.getByLabel('Smartphones')).toBeVisible();
+  await expect(cheaperTurn.getByLabel('Fragrances')).toBeVisible();
 });
 
 test('three-intent request keeps independent constraints and results scoped to each goal', async ({ page }) => {

@@ -161,6 +161,21 @@ describe('live QA functional regressions', () => {
         constraintOnly: true, decision: 'clarify', targetCount: 2,
       }),
     ]));
+
+    const selector = cheaperTurn.outcomes.find(({ intent }) => intent.status === 'needs_clarification');
+    const selected = await orchestrator.run({
+      turnId: 'selected-cheaper-turn', conversationId: 'same-conversation',
+      prompt: 'Fragrances', previous: {
+        ...cheaperTurn,
+        outcomes: [...additiveTurn.outcomes, ...cheaperTurn.outcomes],
+      },
+      clarification: { intentId: selector!.intent.id, field: 'category', value: 'Fragrances' },
+    });
+    expect(selected.outcomes.map(({ intent }) => intent.constraints.category).sort())
+      .toEqual(['fragrances', 'smartphones']);
+    expect(selected.outcomes.find(({ intent }) => intent.constraints.category === 'fragrances')?.intent.constraints.sort)
+      .toBe('price_asc');
+    expect(selected.outcomes.some(({ intent }) => intent.id === selector!.intent.id)).toBe(false);
   });
 
   it('targets an explicitly named definite Hebrew product without asking ambiguity', async () => {

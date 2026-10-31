@@ -72,6 +72,145 @@ function catalog(search = vi.fn(async ({ query }: { query: string }) =>
 }
 
 describe('single-agent multi-intent orchestration', () => {
+  function ordinalCatalogProducts() {
+    const firstPhone: Product = { ...phone, id: 101, title: 'Alpha Phone', price: 500 };
+    const secondPhone: Product = { ...phone, id: 102, title: 'Beta Phone', price: 300 };
+    const cheaperPhone: Product = { ...phone, id: 103, title: 'Gamma Phone', price: 180 };
+    const equalPricePhone: Product = { ...phone, id: 104, title: 'Delta Phone', price: 300 };
+    const perfume: Product = { ...fragrance, id: 201, title: 'Evening Perfume', price: 75 };
+    const all = [firstPhone, secondPhone, cheaperPhone, equalPricePhone, perfume];
+    return {
+      products: all,
+      client: {
+        searchProducts: vi.fn(async () => page(all)),
+        listProductsByCategory: vi.fn(async (category: string) => page(all.filter((product) => product.category === category))),
+        getProduct: vi.fn(async (id: number) => {
+          const found = all.find((product) => product.id === id);
+          if (!found) throw new CatalogError('http', 'not found', { endpoint: `/products/${id}`, status: 404 });
+          return found;
+        }),
+        listCategories: vi.fn(async () => [
+          { slug: 'smartphones', name: 'Smartphones', url: 'https://dummyjson.com/products/category/smartphones' },
+          { slug: 'fragrances', name: 'Fragrances', url: 'https://dummyjson.com/products/category/fragrances' },
+        ]),
+      },
+    };
+  }
+
+  it('enforces displayed identity while preserving an additive product clause on the real catalog path', async () => {
+    const { client } = ordinalCatalogProducts();
+    const extractIntents = vi.fn(async ({ prompt }: { prompt: string }) => prompt === 'Find phones'
+      ? { response: 'Phones.', intents: [{ goal: 'Phones', query: 'phone', constraints: { category: 'smartphones' } }] }
+      : { response: 'Wrong model plan.', intents: [{ goal: 'Laptops', query: 'laptops', constraints: { category: 'laptops' } }] });
+    const orchestrator = createIntentOrchestrator({ catalog: client, extractIntents });
+    const first = await orchestrator.run({
+      turnId: 'ordinal-add-1', conversationId: 'ordinal-add', prompt: 'Find phones',
+    });
+    const selected = first.outcomes[0].products[1].product;
+
+    const second = await orchestrator.run({
+      turnId: 'ordinal-add-2',
+      conversationId: 'ordinal-add',
+      prompt: 'Show me the second one and find perfume',
+      previous: first,
+      displayedProductReference: {
+        intentId: first.outcomes[0].intent.id,
+        position: 1,
+        product: { id: selected.id, title: selected.title, price: selected.price, category: selected.category },
+      },
+    });
+
+    expect(second.outcomes).toHaveLength(2);
+    expect(second.outcomes[0].intent.id).toBe(first.outcomes[0].intent.id);
+    expect(second.outcomes[0].products.map(({ product }) => product.id)).toEqual([selected.id]);
+    expect(second.outcomes[1].intent.constraints.category).toBe('fragrances');
+    expect(second.outcomes[1].products.map(({ product }) => product.id)).toEqual([201]);
+  });
+
+  it.each([
+    { prompt: 'Make the second one cheaper', expectedIds: [103], expectedMaxPrice: undefined },
+    { prompt: 'Show me the second one under $250', expectedIds: [103], expectedMaxPrice: 250 },
+  ])('enforces displayed intent and deterministic constraints for $prompt', async ({ prompt, expectedIds, expectedMaxPrice }) => {
+    const { client } = ordinalCatalogProducts();
+    const extractIntents = vi.fn(async ({ prompt: currentPrompt }: { prompt: string }) => currentPrompt === 'Find phones'
+      ? { response: 'Phones.', intents: [{ goal: 'Phones', query: 'phone', constraints: { category: 'smartphones' } }] }
+      : { response: 'Wrong model plan.', intents: [{ goal: 'Perfume', query: 'perfume', constraints: { category: 'fragrances' } }] });
+    const orchestrator = createIntentOrchestrator({ catalog: client, extractIntents });
+    const first = await orchestrator.run({
+      turnId: 'ordinal-refine-1', conversationId: prompt, prompt: 'Find phones',
+    });
+    const selected = first.outcomes[0].products[1].product;
+
+    const refined = await orchestrator.run({
+      turnId: 'ordinal-refine-2', conversationId: prompt, prompt, previous: first,
+      displayedProductReference: {
+        intentId: first.outcomes[0].intent.id,
+        position: 1,
+        product: { id: selected.id, title: selected.title, price: selected.price, category: selected.category },
+      },
+    });
+
+    expect(refined.outcomes).toHaveLength(1);
+    expect(refined.outcomes[0].intent.id).toBe(first.outcomes[0].intent.id);
+    expect(refined.outcomes[0].intent.constraints).toMatchObject({
+      category: 'smartphones',
+      ...(prompt.includes('cheaper') ? { sort: 'price_asc' } : {}),
+      ...(expectedMaxPrice === undefined ? {} : { maxPrice: expectedMaxPrice }),
+    });
+    expect(refined.outcomes[0].products.map(({ product }) => product.id)).toEqual(expectedIds);
+  });
+
+  it('returns an honest empty result when no product is strictly cheaper than the selected baseline', async () => {
+    const { client } = ordinalCatalogProducts();
+    const extractIntents = vi.fn(async () => ({
+      response: 'Phones.', intents: [{ goal: 'Phones', query: 'phone', constraints: { category: 'smartphones' } }],
+    }));
+    const orchestrator = createIntentOrchestrator({ catalog: client, extractIntents });
+    const first = await orchestrator.run({
+      turnId: 'ordinal-empty-1', conversationId: 'ordinal-empty', prompt: 'Find phones',
+    });
+    const selectedPosition = first.outcomes[0].products.findIndex(({ product }) => product.id === 103);
+    expect(selectedPosition).toBeGreaterThanOrEqual(0);
+    const selected = first.outcomes[0].products[selectedPosition].product;
+
+    const refined = await orchestrator.run({
+      turnId: 'ordinal-empty-2', conversationId: 'ordinal-empty', prompt: 'Make the third one cheaper', previous: first,
+      displayedProductReference: {
+        intentId: first.outcomes[0].intent.id,
+        position: selectedPosition,
+        product: { id: selected.id, title: selected.title, price: selected.price, category: selected.category },
+      },
+    });
+
+    expect(refined.outcomes[0].products).toEqual([]);
+    expect(refined.response).toMatch(/catalog has no smartphones matching every filter/i);
+  });
+
+  it('keeps a tighter prior budget when a selected-product cheaper request supplies a looser one', async () => {
+    const { client } = ordinalCatalogProducts();
+    const extractIntents = vi.fn(async ({ prompt }: { prompt: string }) => prompt === 'Find phones under $350'
+      ? { response: 'Phones.', intents: [{ goal: 'Phones', query: 'phone', constraints: { category: 'smartphones', maxPrice: 350 } }] }
+      : { response: 'Wrong model plan.', intents: [{ goal: 'Perfume', query: 'perfume', constraints: { category: 'fragrances', maxPrice: 400 } }] });
+    const orchestrator = createIntentOrchestrator({ catalog: client, extractIntents });
+    const first = await orchestrator.run({
+      turnId: 'ordinal-budget-1', conversationId: 'ordinal-budget', prompt: 'Find phones under $350',
+    });
+    const selected = first.outcomes[0].products.find(({ product }) => product.id === 102)!.product;
+    const selectedPosition = first.outcomes[0].products.findIndex(({ product }) => product.id === selected.id);
+
+    const refined = await orchestrator.run({
+      turnId: 'ordinal-budget-2', conversationId: 'ordinal-budget',
+      prompt: 'Make the first one cheaper under $400', previous: first,
+      displayedProductReference: {
+        intentId: first.outcomes[0].intent.id, position: selectedPosition,
+        product: { id: selected.id, title: selected.title, price: selected.price, category: selected.category },
+      },
+    });
+
+    expect(refined.outcomes[0].intent.constraints).toMatchObject({ maxPrice: 350, sort: 'price_asc' });
+    expect(refined.outcomes[0].products.map(({ product }) => product.id)).toEqual([103]);
+  });
+
   it('treats flights as outside the product catalog and resets unrelated prior results', async () => {
     const catalogClient = catalog();
     const orchestrator = createIntentOrchestrator({

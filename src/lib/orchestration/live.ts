@@ -8,6 +8,7 @@ import type { SemanticEvidenceReport } from './semantic-evidence';
 import type { OrchestrationResult } from './contracts';
 import type { ClarificationAnswer } from './contracts';
 import { createServerDiagnosticReporter } from '../diagnostics/server-trace';
+import type { OrchestrationDecisionDiagnostic } from '../diagnostics/server-trace';
 
 export async function runLiveOrchestration(input: {
   turnId: string;
@@ -15,6 +16,7 @@ export async function runLiveOrchestration(input: {
   prompt: string;
   previous?: OrchestrationResult;
   clarification?: ClarificationAnswer;
+  observeDecision?: (event: OrchestrationDecisionDiagnostic) => void;
 }): Promise<OrchestrationResult> {
   let environment;
   try {
@@ -37,7 +39,10 @@ export async function runLiveOrchestration(input: {
     catalog,
     extractIntents,
     semanticEvidenceEvaluator,
-    observeDecision: (event) => serverDiagnostics.decision(event),
+    observeDecision: (event) => {
+      serverDiagnostics.decision(event);
+      input.observeDecision?.(event);
+    },
     observeSemanticEvidence: (report: SemanticEvidenceReport) => {
       if (process.env.NODE_ENV === 'test') return;
       const summary = report.status === 'completed'

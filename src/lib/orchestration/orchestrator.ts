@@ -7,7 +7,9 @@ import {
   extractedTurnPlanSchema,
   type ClarificationAnswer,
   type ExtractedIntent,
+  type ExtractedTurnPlan,
   type IntentExtractor,
+  type IntentExtractionContext,
   type IntentOutcome,
   type OrchestrationResult,
 } from './contracts';
@@ -18,7 +20,7 @@ import {
   requestedFeatureEvidence,
   requestedFeatureEvidenceForIntent,
 } from './feature-evidence';
-import { coalesceAlternativeProductDrafts, decideFollowUpTargets, inspectPlanCategoryCoverage, isAdditiveNamedRequest, isExclusiveNamedFollowUp } from './plan-integrity';
+import { coalesceAlternativeProductDrafts, decideFollowUpTargets, explicitPromptCategories, inspectPlanCategoryCoverage, isAdditiveNamedRequest, isExclusiveNamedFollowUp } from './plan-integrity';
 import { classifyIntentRequest } from './request-classification';
 import {
   applySemanticEvidenceRanking,
@@ -71,6 +73,7 @@ export type OrchestrateTurnInput = {
   previous?: OrchestrationResult;
   retryIntentId?: string;
   clarification?: ClarificationAnswer;
+  displayedProductReference?: IntentExtractionContext['displayedProductReference'];
 };
 
 const SEMANTIC_RERANK_TIMEOUT_MS = 8_000;
@@ -383,7 +386,7 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
           };
         }
       }
-      let plan;
+      let plan: ExtractedTurnPlan;
       if (input.retryIntentId && input.clarification) {
         throw new OrchestrationError('invalid_refinement', 'A turn cannot retry and clarify at the same time.');
       }
@@ -403,15 +406,29 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
           throw new OrchestrationError('invalid_refinement', 'The clarification intent is not part of the previous conversation state.');
         }
         const isHebrew = /[\u0590-\u05ff]/u.test(promptResult.data);
+        const selectedCategory = input.clarification.field === 'category'
+          ? resolveCatalogCategory(input.clarification.value, input.clarification.value, availableCategories)
+          : undefined;
+        const selectedPriorIntent = !prior.intent.constraints.category && selectedCategory
+          ? previousOutcomes.find(({ intent }) => intent.id !== prior.intent.id
+            && intent.constraints.category === selectedCategory)
+          : undefined;
         plan = extractedTurnPlanSchema.parse({
-          response: isHebrew ? `החלתי את ${input.clarification.value} על ${prior.intent.goal}.` : `I applied ${input.clarification.value} to ${prior.intent.goal}.`,
-          intents: [clarificationUpdate(input.clarification, prior)],
+          response: isHebrew ? `החלתי את ${input.clarification.value} על בקשת הקנייה שבחרת.` : `I applied the update to the selected ${input.clarification.value} request.`,
+          intents: selectedPriorIntent ? [{
+            intentId: selectedPriorIntent.intent.id,
+            constraints: prior.intent.constraints,
+            status: 'ready',
+          }] : [clarificationUpdate(input.clarification, prior)],
         });
       } else {
         try {
           const rawPlan = await options.extractIntents({
             prompt: promptResult.data,
             previousIntents: previousOutcomes.map(({ intent }) => ({ ...intent })),
+            ...(input.displayedProductReference
+              ? { displayedProductReference: input.displayedProductReference }
+              : {}),
           });
           plan = extractedTurnPlanSchema.parse(rawPlan);
         } catch (error) {
@@ -455,6 +472,101 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
               query: category,
               constraints: { ...draft?.constraints, category },
               status: 'ready' as const,
+            };
+          }),
+        };
+      }
+      const displayedReference = input.displayedProductReference;
+      const referencedOutcome = displayedReference ? previous.get(displayedReference.intentId) : undefined;
+      const referencedRankedProduct = displayedReference
+        ? referencedOutcome?.products[displayedReference.position]
+        : undefined;
+      if (displayedReference && (!referencedOutcome || !referencedRankedProduct
+        || referencedRankedProduct.product.id !== displayedReference.product.id
+        || referencedRankedProduct.product.title !== displayedReference.product.title
+        || referencedRankedProduct.product.price !== displayedReference.product.price
+        || referencedRankedProduct.product.category !== displayedReference.product.category)) {
+        throw new OrchestrationError(
+          'invalid_refinement',
+          'The displayed product reference does not match the persisted catalog result.',
+        );
+      }
+      const referencedRefinement = Boolean(displayedReference
+        && isConstraintOnlyFollowUp(promptResult.data, availableCategories));
+      const referencedCheaperComparison = Boolean(displayedReference
+        && /(?:\bcheaper\b|(?:יותר\s+זול|זול\s+יותר))/iu.test(promptResult.data));
+      const namedCompoundCategories = displayedReference
+        ? explicitPromptCategories(promptResult.data, availableCategories, resolveCatalogCategory)
+          .filter((category) => category !== displayedReference.product.category)
+        : [];
+      if (displayedReference && referencedRefinement && referencedOutcome) {
+        const requestedReferenceBudget = explicitUsdMaxPrice(promptResult.data);
+        const previousReferenceBudget = referencedOutcome.intent.constraints.maxPrice;
+        const effectiveReferenceBudget = requestedReferenceBudget === undefined
+          ? previousReferenceBudget
+          : previousReferenceBudget === undefined
+            ? requestedReferenceBudget
+            : Math.min(previousReferenceBudget, requestedReferenceBudget);
+        const modelDraft = plan.intents.find(({ intentId }) => intentId === displayedReference.intentId)
+          ?? plan.intents.find((draft) => resolveCatalogCategory(
+            draft.constraints.category,
+            `${draft.goal ?? ''} ${draft.query ?? ''}`,
+            availableCategories,
+          ) === displayedReference.product.category)
+          ?? plan.intents[0];
+        const additionalDrafts = namedCompoundCategories.map((category) => {
+          const matching = plan.intents.find((draft) => resolveCatalogCategory(
+            draft.constraints.category,
+            `${draft.goal ?? ''} ${draft.query ?? ''}`,
+            availableCategories,
+          ) === category);
+          return {
+            ...matching,
+            intentId: undefined,
+            goal: matching?.goal ?? `Find ${category.replace(/-/gu, ' ')}`,
+            query: matching?.query ?? category,
+            constraints: { ...matching?.constraints, category },
+            status: matching?.status ?? 'ready' as const,
+          };
+        });
+        plan = {
+          ...plan,
+          intents: [{
+            ...modelDraft,
+            intentId: displayedReference.intentId,
+            goal: undefined,
+            query: undefined,
+            constraints: {
+              ...referencedOutcome.intent.constraints,
+              category: displayedReference.product.category,
+              ...(effectiveReferenceBudget === undefined ? {} : { maxPrice: effectiveReferenceBudget }),
+              ...(intentRequestsCheapOrdering(
+                promptResult.data,
+                `${modelDraft?.goal ?? ''} ${modelDraft?.query ?? ''}`,
+                1,
+                displayedReference.product.category,
+                availableCategories,
+              ) ? { sort: 'price_asc' as const } : {}),
+            },
+            status: modelDraft?.status ?? 'ready' as const,
+          }, ...additionalDrafts],
+        };
+      } else if (displayedReference && namedCompoundCategories.length > 0) {
+        plan = {
+          ...plan,
+          intents: namedCompoundCategories.map((category) => {
+            const matching = plan.intents.find((draft) => resolveCatalogCategory(
+              draft.constraints.category,
+              `${draft.goal ?? ''} ${draft.query ?? ''}`,
+              availableCategories,
+            ) === category);
+            return {
+              ...matching,
+              intentId: undefined,
+              goal: matching?.goal ?? `Find ${category.replace(/-/gu, ' ')}`,
+              query: matching?.query ?? category,
+              constraints: { ...matching?.constraints, category },
+              status: matching?.status ?? 'ready' as const,
             };
           }),
         };
@@ -517,7 +629,9 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
       } catch {
         // Development diagnostics cannot fail a shopper request.
       }
-      const drafts: ExtractedIntent[] = followUpTarget.kind === 'clarify'
+      const drafts: ExtractedIntent[] = displayedReference
+        ? plan.intents
+        : followUpTarget.kind === 'clarify'
         ? [{
           goal: /[\u0590-\u05ff]/u.test(promptResult.data) ? 'בחירת מוצר לעדכון' : 'Choose which product to refine',
           query: promptResult.data,
@@ -631,10 +745,16 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
         input.retryIntentId
         || input.clarification
         || additiveNamedRequest
+        || Boolean(displayedReference && namedCompoundCategories.length > 0)
         || (continuesPreviousIntent && !exclusiveNamedFollowUp),
       );
-      const preserved = await Promise.all((shouldPreserveSiblingIntents ? previousOutcomes : [])
-        .filter(({ intent }) => !plannedIds.has(intent.id))
+      const previousOutcomesToPreserve = (shouldPreserveSiblingIntents ? previousOutcomes : [])
+        .filter(({ intent }) => !plannedIds.has(intent.id) && intent.id !== input.clarification?.intentId)
+        .map((outcome) => displayedReference && !referencedRefinement
+          && outcome.intent.id === displayedReference.intentId && referencedRankedProduct
+          ? { ...outcome, products: [referencedRankedProduct] }
+          : outcome);
+      const preserved = await Promise.all(previousOutcomesToPreserve
         .map(async (outcome): Promise<IntentOutcome> => {
           for (const ranked of outcome.products) {
             let trusted;
@@ -738,6 +858,13 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
           const result = input.retryIntentId === intent.id
             ? await executeWithRetry(search, options.retryOptions)
             : await search();
+          const catalogProducts = referencedCheaperComparison
+            && displayedReference
+            && intent.id === displayedReference.intentId
+            ? result.products.filter((product) =>
+              product.id !== displayedReference.product.id
+              && product.price < displayedReference.product.price)
+            : result.products;
           const featureRequirements = requestedFeatureEvidenceForIntent({
             prompt: promptResult.data,
             intentContext: `${intent.goal} ${intent.query}`,
@@ -745,7 +872,7 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
             intentCount: planned.length,
             availableCategories,
           });
-          const hardFiltered = rankCatalogProducts(result.products, {
+          const hardFiltered = rankCatalogProducts(catalogProducts, {
             query: intent.query,
             constraints: intent.constraints,
             limit: undefined,
@@ -775,6 +902,7 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
                 assessments: report.assessments,
                 onlyVerified,
                 negativeTerms: negativePreferenceTerms(promptResult.data),
+                priceFirst: intent.constraints.sort === 'price_asc',
               });
               const products = ranked;
               if (products.length === 0) {
@@ -819,7 +947,7 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
               },
             };
           }
-          const evidenceProducts = filterProductsByFeatureEvidence(result.products, featureRequirements);
+          const evidenceProducts = filterProductsByFeatureEvidence(catalogProducts, featureRequirements);
           const products = rankCatalogProducts(evidenceProducts, {
             query: intent.query,
             constraints: intent.constraints,

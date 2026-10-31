@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ConversationExecutionService, PersistedExecutionError } from '../src/lib/execution';
+import { ConversationExecutionService, PersistedExecutionError, type RunOrchestration } from '../src/lib/execution';
 import { CommerceRepository, PersistenceConflictError } from '../src/lib/persistence';
 import type { OrchestrationResult } from '../src/lib/orchestration';
 import { createGetHandler, createPostHandler, POST } from '../src/app/api/orchestrate/route';
@@ -61,6 +61,41 @@ describe('ConversationExecutionService', () => {
     repository.close();
   });
 
+  it('serializes overlapping turns per conversation even when the later turn would finish first', async () => {
+    const repository = new CommerceRepository(databasePath());
+    const releaseFirst = deferred<void>();
+    const runner = vi.fn(async (input: Parameters<RunOrchestration>[0]) => {
+      if (input.turnId === 'slow-first') await releaseFirst.promise;
+      return {
+        turnId: input.turnId,
+        status: 'completed' as const,
+        response: input.turnId,
+        outcomes: [{
+          intent: {
+            id: input.turnId, goal: input.prompt, query: input.prompt, constraints: {}, status: 'completed' as const,
+          },
+          products: [],
+        }],
+      };
+    });
+    const service = new ConversationExecutionService(repository, runner, () => '2026-10-28T11:00:00.000Z');
+
+    const first = service.execute({ conversationId: 'serialized', turnId: 'slow-first', prompt: 'First' });
+    const second = service.execute({ conversationId: 'serialized', turnId: 'fast-second', prompt: 'Second' });
+    await vi.waitFor(() => expect(runner).toHaveBeenCalledTimes(1));
+    expect(Object.fromEntries(service.readConversation('serialized').turns.map(({ id, status }) => [id, status])))
+      .toEqual({ 'slow-first': 'running', 'fast-second': 'queued' });
+
+    releaseFirst.resolve();
+    await expect(Promise.all([first, second])).resolves.toMatchObject([
+      { turnId: 'slow-first' }, { turnId: 'fast-second' },
+    ]);
+    expect(runner.mock.calls.map(([input]) => input.turnId)).toEqual(['slow-first', 'fast-second']);
+    expect(repository.getConversationState('serialized')).toMatchObject({ revision: 2, lastTurnId: 'fast-second' });
+    expect(service.readConversation('serialized').turns.every(({ status }) => status === 'completed')).toBe(true);
+    repository.close();
+  });
+
   it('binds in-flight and completed replays to the canonical semantic acceptance fingerprint', async () => {
     const repository = new CommerceRepository(databasePath());
     const completion = deferred<OrchestrationResult>();
@@ -81,6 +116,174 @@ describe('ConversationExecutionService', () => {
     expect(() => service.execute({ ...input, prompt: 'Find shoes' })).toThrow(PersistenceConflictError);
     expect(() => service.execute({ ...input, retryIntentId: 'intent-1' })).toThrow(PersistenceConflictError);
     expect(runner).toHaveBeenCalledOnce();
+    repository.close();
+  });
+
+  it('resolves a displayed ordinal from persisted state after a service restart without calling the model', async () => {
+    const path = databasePath();
+    const products = [{
+      product: { id: 11, title: 'First Phone', description: '', category: 'smartphones', price: 300, tags: [], images: [] },
+      score: 1, matchReasons: [],
+    }, {
+      product: { id: 12, title: 'Second Phone', description: '', category: 'smartphones', price: 250, tags: [], images: [] },
+      score: 0.9, matchReasons: [],
+    }];
+    const firstRunner = vi.fn(async (input: Parameters<RunOrchestration>[0]) => {
+      input.observeDecision?.({ stage: 'catalog_search', intentId: 'phones', category: 'smartphones', filters: {} });
+      return { turnId: input.turnId, status: 'completed' as const, response: 'Found phones.', outcomes: [{
+        intent: { id: 'phones', goal: 'Find phones', query: 'phones', constraints: { category: 'smartphones' }, status: 'completed' as const },
+        products,
+      }] };
+    });
+    const firstRepository = new CommerceRepository(path);
+    const firstService = new ConversationExecutionService(firstRepository, firstRunner, () => '2026-10-28T11:00:00.000Z');
+    await firstService.execute({ conversationId: 'ordinal', turnId: 'turn-1', prompt: 'Find phones' });
+    firstRepository.close();
+
+    const restartedRepository = new CommerceRepository(path);
+    const restartedRunner = vi.fn();
+    const restartedService = new ConversationExecutionService(restartedRepository, restartedRunner, () => '2026-10-28T11:01:00.000Z');
+    const selected = await restartedService.execute({
+      conversationId: 'ordinal', turnId: 'turn-2', prompt: 'Show me the second one',
+    });
+
+    expect(restartedRunner).not.toHaveBeenCalled();
+    expect(selected.outcomes[0].products.map(({ product }) => product.id)).toEqual([12]);
+    expect(restartedRepository.getConversationState('ordinal')).toMatchObject({
+      revision: 2, currentFocusIntentId: 'phones', lastOperation: 'select_product',
+    });
+    expect(restartedRepository.listToolRuns('turn-1')).toMatchObject([{
+      toolName: 'listCategoryProducts', outputReference: { productIds: [11, 12] },
+    }]);
+    restartedRepository.close();
+  });
+
+  it.each<{
+    prompt: string;
+    expectedOutcomes: Array<{
+      id: string;
+      category: string;
+      constraints: { category: string; sort?: 'price_asc'; maxPrice?: number };
+    }>;
+  }>([
+    {
+      prompt: 'Show me the second one and find perfume',
+      expectedOutcomes: [
+        { id: 'phones', category: 'smartphones', constraints: { category: 'smartphones' } },
+        { id: 'perfume', category: 'fragrances', constraints: { category: 'fragrances' } },
+      ],
+    },
+    {
+      prompt: 'Make the second one cheaper',
+      expectedOutcomes: [
+        { id: 'phones', category: 'smartphones', constraints: { category: 'smartphones', sort: 'price_asc' } },
+      ],
+    },
+    {
+      prompt: 'Show me the second one under $200',
+      expectedOutcomes: [
+        { id: 'phones', category: 'smartphones', constraints: { category: 'smartphones', maxPrice: 200 } },
+      ],
+    },
+  ])('resolves the actual displayed product and preserves compound semantics: $prompt', async ({ prompt, expectedOutcomes }) => {
+    const repository = new CommerceRepository(databasePath());
+    const products = [1, 2].map((id) => ({
+      product: { id, title: `Phone ${id}`, description: '', category: 'smartphones', price: 300 - id, tags: [], images: [] },
+      score: 1, matchReasons: [],
+    }));
+    const runner = vi.fn<RunOrchestration>(async (input) => {
+      if (input.turnId === 'turn-1') return {
+        turnId: input.turnId,
+        status: 'completed' as const,
+        response: 'Found phones.',
+        outcomes: [{
+          intent: { id: 'phones', goal: 'Phones', query: 'phones', constraints: { category: 'smartphones' }, status: 'completed' as const },
+          products,
+        }],
+      };
+      expect(input.displayedProductReference).toEqual({
+        intentId: 'phones',
+        position: 1,
+        product: { id: 2, title: 'Phone 2', price: 298, category: 'smartphones' },
+      });
+      return {
+        turnId: input.turnId,
+        status: 'completed' as const,
+        response: 'Handled complete request.',
+        outcomes: expectedOutcomes.map(({ id, category, constraints }) => ({
+          intent: { id, goal: category, query: category, constraints, status: 'completed' as const },
+          products: id === 'phones' ? [products[1]] : [],
+        })),
+      };
+    });
+    const service = new ConversationExecutionService(repository, runner, () => '2026-10-28T11:00:00.000Z');
+    await service.execute({ conversationId: prompt, turnId: 'turn-1', prompt: 'Find phones' });
+    const result = await service.execute({ conversationId: prompt, turnId: 'turn-2', prompt });
+
+    expect(runner).toHaveBeenCalledTimes(2);
+    expect(result.outcomes.map(({ intent }) => ({ id: intent.id, constraints: intent.constraints })))
+      .toEqual(expectedOutcomes.map(({ id, constraints }) => ({ id, constraints })));
+    expect(result.outcomes.find(({ intent }) => intent.id === 'phones')?.products[0]?.product.id).toBe(2);
+    repository.close();
+  });
+
+  it('keeps active siblings in canonical state while rendering only an ambiguity prompt', async () => {
+    const repository = new CommerceRepository(databasePath());
+    const completedIntent = (id: string, category: string) => ({
+      intent: { id, goal: category, query: category, constraints: { category }, status: 'completed' as const },
+      products: [],
+    });
+    const runner = vi.fn(async (input: { turnId: string; previous?: OrchestrationResult }) => {
+      if (input.turnId === 'turn-1') return {
+        turnId: input.turnId, status: 'completed' as const, response: 'Found both.',
+        outcomes: [completedIntent('phones', 'smartphones'), completedIntent('scents', 'fragrances')],
+      };
+      if (input.turnId === 'turn-2') return {
+        turnId: input.turnId, status: 'partial' as const, response: 'Which one?', outcomes: [{
+          intent: { id: 'selector', goal: 'Choose', query: 'cheaper', constraints: { sort: 'price_asc' as const }, status: 'needs_clarification' as const },
+          products: [],
+          clarification: { field: 'category' as const, question: 'Which category?', options: ['Smartphones', 'Fragrances'], reason: 'requested' as const },
+        }],
+      };
+      expect(input.previous?.outcomes.map(({ intent }) => intent.id)).toEqual(['phones', 'scents', 'selector']);
+      return {
+        turnId: input.turnId, status: 'completed' as const, response: 'Updated fragrances.',
+        outcomes: [completedIntent('phones', 'smartphones'), completedIntent('scents', 'fragrances')],
+      };
+    });
+    const service = new ConversationExecutionService(repository, runner, () => '2026-10-28T11:00:00.000Z');
+
+    await service.execute({ conversationId: 'multi-state', turnId: 'turn-1', prompt: 'Find phones and fragrances' });
+    const visibleClarification = await service.execute({ conversationId: 'multi-state', turnId: 'turn-2', prompt: 'Show cheaper options' });
+    expect(visibleClarification.outcomes.map(({ intent }) => intent.id)).toEqual(['selector']);
+    expect(repository.getConversationState('multi-state')?.activeResult?.outcomes.map(({ intent }) => intent.id))
+      .toEqual(['phones', 'scents', 'selector']);
+    await service.execute({ conversationId: 'multi-state', turnId: 'turn-3', prompt: 'Fragrances' });
+    expect(repository.getConversationState('multi-state')).toMatchObject({ revision: 3, lastOperation: 'refine' });
+    repository.close();
+  });
+
+  it('bounds active model context while retaining the complete turn result', async () => {
+    const repository = new CommerceRepository(databasePath());
+    const runner = vi.fn(async (input: { turnId: string; previous?: OrchestrationResult }) => {
+      if (input.turnId === 'turn-1') return {
+        turnId: input.turnId, status: 'completed' as const, response: 'Found many goals.',
+        outcomes: Array.from({ length: 9 }, (_, index) => ({
+          intent: { id: `intent-${index}`, goal: `Goal ${index}`, query: `query-${index}`, constraints: {}, status: 'completed' as const },
+          products: [],
+        })),
+      };
+      expect(input.previous?.outcomes).toHaveLength(8);
+      expect(input.previous?.outcomes[0].intent.id).toBe('intent-1');
+      return { turnId: input.turnId, status: 'completed' as const, response: 'Done.', outcomes: [input.previous!.outcomes[0]] };
+    });
+    const service = new ConversationExecutionService(repository, runner, () => '2026-10-28T11:00:00.000Z');
+
+    const first = await service.execute({ conversationId: 'bounded', turnId: 'turn-1', prompt: 'Find nine things' });
+    expect(first.outcomes).toHaveLength(9);
+    expect(service.readConversation('bounded').turns[0].result?.outcomes).toHaveLength(9);
+    expect(repository.getConversationState('bounded')?.activeResult?.outcomes).toHaveLength(8);
+    await service.execute({ conversationId: 'bounded', turnId: 'turn-2', prompt: 'Continue' });
     repository.close();
   });
 

@@ -27,6 +27,26 @@ const expensivePhone: Product = { ...phone, id: 2, title: 'Expensive Camera Phon
 const requirements = [{ label: 'camera capabilities', alternatives: ['camera'] }];
 
 describe('semantic evidence relevance evaluation', () => {
+  it('keeps explicit cheaper ordering ahead of semantic relevance', () => {
+    const ranked = applySemanticEvidenceRanking({
+      ranked: [
+        { product: { ...phone, id: 2, price: 700 }, score: 0.9 },
+        { product: { ...phone, id: 3, price: 200 }, score: 0.4 },
+      ],
+      assessments: [{
+        productId: 2, requirement: 'phone', verdict: 'supported', confidence: 1,
+        relevanceScore: 1, evidence: [{ field: 'title', quote: 'Camera Phone' }],
+      }, {
+        productId: 3, requirement: 'phone', verdict: 'unknown', confidence: 0.2,
+        relevanceScore: 0.1, evidence: [],
+      }],
+      onlyVerified: false,
+      priceFirst: true,
+    });
+
+    expect(ranked.map(({ product }) => product.id)).toEqual([3, 2]);
+  });
+
   it('accepts complete verdicts backed by literal trusted catalog spans', () => {
     expect(validateSemanticEvidenceBatch({
       assessments: [{

@@ -6,6 +6,8 @@ import { applyMigrations } from './migrations';
 import type {
   CompleteTurnInput,
   AcceptTurnInput,
+  ConversationMemoryState,
+  DecisionEventRecord,
   ConversationRecord,
   IntentRecord,
   MessageRecord,
@@ -181,6 +183,32 @@ function snapshotFromRow(row: SqlRow): ProductSnapshotRecord {
     turnId: String(row.turn_id),
     intentId: String(row.intent_id),
     products: productSchema.array().parse(parseJson(row.products_json)),
+    createdAt: String(row.created_at),
+  };
+}
+
+function conversationStateFromRow(row: SqlRow): ConversationMemoryState {
+  const state = parseJson<ConversationMemoryState>(row.state_json);
+  if (state.conversationId !== String(row.conversation_id)
+    || state.revision !== Number(row.revision)
+    || state.updatedAt !== String(row.updated_at)
+    || !['add', 'replace', 'refine', 'clarify', 'select_product'].includes(state.lastOperation)
+    || typeof state.lastTurnId !== 'string'
+    || !state.lastTurnId.trim()) {
+    throw new PersistenceConflictError('Persisted conversation state metadata is inconsistent.');
+  }
+  if (state.activeResult) orchestrationResultSchema.parse(state.activeResult);
+  return state;
+}
+
+function decisionEventFromRow(row: SqlRow): DecisionEventRecord {
+  return {
+    id: String(row.id),
+    conversationId: String(row.conversation_id),
+    turnId: String(row.turn_id),
+    sequence: Number(row.sequence),
+    stage: String(row.stage),
+    payload: parseJson(row.payload_json),
     createdAt: String(row.created_at),
   };
 }
@@ -399,6 +427,17 @@ export class CommerceRepository implements Disposable {
       .all(turnId) as SqlRow[]).map(snapshotFromRow);
   }
 
+  getConversationState(conversationId: string): ConversationMemoryState | undefined {
+    const row = this.database.prepare('SELECT * FROM conversation_state WHERE conversation_id = ?')
+      .get(conversationId) as SqlRow | undefined;
+    return row ? conversationStateFromRow(row) : undefined;
+  }
+
+  listDecisionEvents(turnId: string): DecisionEventRecord[] {
+    return (this.database.prepare('SELECT * FROM decision_events WHERE turn_id = ? ORDER BY sequence, id')
+      .all(turnId) as SqlRow[]).map(decisionEventFromRow);
+  }
+
   completeTurn(input: CompleteTurnInput): TurnRecord {
     required(input.turnId, 'completion.turnId');
     const digest = fingerprint(input);
@@ -418,6 +457,7 @@ export class CommerceRepository implements Disposable {
       for (const intent of input.intents) this.insertIntent(intent);
       for (const run of input.toolRuns) this.insertToolRun(run);
       for (const snapshot of input.productSnapshots) this.insertSnapshot(snapshot);
+      for (const event of input.decisionEvents ?? []) this.insertDecisionEvent(event);
       if (input.assistantMessage) this.appendMessage(input.assistantMessage);
 
       this.database.prepare(`
@@ -430,6 +470,7 @@ export class CommerceRepository implements Disposable {
       this.database.prepare(`
         UPDATE conversations SET updated_at = ? WHERE id = (SELECT conversation_id FROM turns WHERE id = ?)
       `).run(input.completedAt, input.turnId);
+      if (input.conversationState) this.upsertConversationState(input.conversationState);
       this.database.exec('COMMIT');
       return this.getTurn(input.turnId)!;
     } catch (error) {
@@ -459,6 +500,16 @@ export class CommerceRepository implements Disposable {
       }
       if (!intentIds.has(snapshot.intentId)) {
         throw new PersistenceConflictError(`Snapshot ${snapshot.id} references an intent outside turn ${input.turnId}.`);
+      }
+    }
+    if (input.conversationState
+      && (input.conversationState.conversationId !== conversationId
+        || input.conversationState.lastTurnId !== input.turnId)) {
+      throw new PersistenceConflictError(`Conversation state does not belong to turn ${input.turnId}.`);
+    }
+    for (const event of input.decisionEvents ?? []) {
+      if (event.turnId !== input.turnId || event.conversationId !== conversationId) {
+        throw new PersistenceConflictError(`Decision event ${event.id} does not belong to turn ${input.turnId}.`);
       }
     }
     if (input.assistantMessage
@@ -503,5 +554,43 @@ export class CommerceRepository implements Disposable {
       INSERT INTO product_snapshots (id, turn_id, intent_id, products_json, created_at)
       VALUES (?, ?, ?, ?, ?)
     `).run(record.id, record.turnId, record.intentId, json(products), record.createdAt);
+  }
+
+  private insertDecisionEvent(record: DecisionEventRecord): void {
+    required(record.id, 'decisionEvent.id');
+    required(record.conversationId, 'decisionEvent.conversationId');
+    required(record.turnId, 'decisionEvent.turnId');
+    required(record.stage, 'decisionEvent.stage');
+    assertSafePayload(record.payload, `decisionEvent.${record.id}.payload`);
+    this.database.prepare(`
+      INSERT INTO decision_events (
+        id, conversation_id, turn_id, sequence, stage, payload_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(record.id, record.conversationId, record.turnId, record.sequence, record.stage,
+      json(record.payload), record.createdAt);
+  }
+
+  private upsertConversationState(state: ConversationMemoryState): void {
+    required(state.conversationId, 'conversationState.conversationId');
+    required(state.lastTurnId, 'conversationState.lastTurnId');
+    if (!Number.isInteger(state.revision) || state.revision < 1) {
+      throw new TypeError('conversationState.revision must be a positive integer.');
+    }
+    assertSafePayload(state, 'conversationState');
+    const current = this.getConversationState(state.conversationId);
+    const expectedRevision = (current?.revision ?? 0) + 1;
+    if (state.revision !== expectedRevision) {
+      throw new PersistenceConflictError(
+        `Conversation ${state.conversationId} state revision must be ${expectedRevision}.`,
+      );
+    }
+    this.database.prepare(`
+      INSERT INTO conversation_state (conversation_id, revision, state_json, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(conversation_id) DO UPDATE SET
+        revision = excluded.revision,
+        state_json = excluded.state_json,
+        updated_at = excluded.updated_at
+    `).run(state.conversationId, state.revision, json(state), state.updatedAt);
   }
 }

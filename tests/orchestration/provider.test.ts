@@ -5,6 +5,7 @@ import { AgentBoundaryError } from '../../src/lib/agent';
 import type { CatalogPage } from '../../src/lib/catalog';
 import type { Environment } from '../../src/lib/config/environment';
 import type { Product } from '../../src/lib/domain/contracts';
+import type { IntentPlanGenerator } from '../../src/lib/orchestration/provider';
 import {
   createIntentOrchestrator,
   createProviderIntentExtractor,
@@ -47,7 +48,7 @@ const modelFactory = () => ({}) as LanguageModel;
 
 describe('provider-backed intent extraction', () => {
   it('turns a shopper prompt into a schema-validated intent plan', async () => {
-    const generate = vi.fn(async () => ({
+    const generate = vi.fn<IntentPlanGenerator>(async () => ({
       intents: [{ goal: 'Photography phone', query: 'phone camera', constraints: { maxPrice: 700 } }],
       response: 'I will search the catalog for a photography phone.',
     }));
@@ -263,6 +264,36 @@ describe('provider-backed intent extraction', () => {
         { intentId: undefined, goal: 'Laptop', query: 'laptop' },
         { intentId: 'prior:intent:1', query: 'work laptop' },
       ],
+    });
+  });
+
+  it('sends the application-resolved displayed product reference as bounded planner context', async () => {
+    let generatedPrompt = '';
+    const generate: IntentPlanGenerator = async (options) => {
+      generatedPrompt = options.prompt;
+      return {
+      intents: [{ intentId: 'phones', query: 'cheaper phone', constraints: { category: 'smartphones', sort: 'price_asc' } }],
+      response: 'I will refine the referenced phone.',
+      };
+    };
+    const extractIntents = createProviderIntentExtractor({ environment, modelFactory, generate });
+
+    await extractIntents({
+      prompt: 'Make the second one cheaper.',
+      displayedProductReference: {
+        intentId: 'phones',
+        position: 1,
+        product: { id: 12, title: 'Second Phone', price: 250, category: 'smartphones' },
+      },
+      previousIntents: [{
+        id: 'phones', goal: 'Phones', query: 'phones', constraints: { category: 'smartphones' }, status: 'completed',
+      }],
+    });
+
+    const providerPrompt = JSON.parse(generatedPrompt) as Record<string, unknown>;
+    expect(providerPrompt.displayedProductReference).toEqual({
+      intentId: 'phones', position: 1,
+      product: { id: 12, title: 'Second Phone', price: 250, category: 'smartphones' },
     });
   });
 
