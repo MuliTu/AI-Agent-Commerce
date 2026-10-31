@@ -19,7 +19,7 @@ This log records current decisions and proposals. “Accepted” means accepted 
 | D-11 | Conversation-owned result groups and independent scroll regions | Accepted design |
 | D-12 | Central, one-file-per-system-prompt organization | Accepted design |
 | D-13 | Fail-closed open-vocabulary catalog evidence | Accepted and implemented |
-| D-14 | Model-assisted semantic evidence judge in shadow mode | Proposed experiment |
+| D-14 | Model-assisted evidence-tier reranker on the local experiment branch | Active experiment |
 
 ## D-01 — Use Next.js with TypeScript
 
@@ -163,24 +163,27 @@ This log records current decisions and proposals. “Accepted” means accepted 
 
 **Trade-offs:** Unknown synonyms can produce false negatives. Generic evidence extraction is intentionally lexical and conservative. Curated features retain broader reviewed synonyms.
 
-## D-14 — Experiment with a semantic evidence judge without replacing the baseline
+## D-14 — Use evidence tiers for visible semantic reranking on the local experiment branch
 
 **Context:** Conservative lexical evidence may miss valid paraphrases. The repository already supports hosted OpenAI and a local LiteLLM-compatible Qwen/Ollama route.
 
-**Experimental decision:** On the local-only `local/semantic-evidence-shadow` branch, implement a model-assisted evidence stage after deterministic hard filtering. The structured output distinguishes `supported`, `contradicted`, and `unknown`, includes confidence, product ID, requirement, and exact trusted catalog evidence. It runs in shadow mode so baseline user-visible results do not change.
+**Experimental decision:** On the local-only `local/semantic-evidence-shadow` branch, let the configured assignment OpenAI provider reorder post-filter candidates into truthful evidence tiers: `supported`, `partial`, `unknown`, and internal `contradicted`. Each assessment includes confidence, a separate relevance score, product ID, requirement, and exact trusted catalog evidence. Supported products appear first, partial/related products next with a visible qualification, unknown products last, and contradicted products are excluded. An explicit “only verified” request keeps only supported products.
 
-**Why:** Shadow mode provides disagreement data and latency/reliability evidence without weakening the verified product boundary before submission.
+**Why:** Customers benefit when colloquial wording and catalog paraphrases influence ordering, but relevance must not be presented as proof. Tier-first ordering makes “satellite voice calling” stronger than related “satellite SOS messaging” while still allowing the related option to appear honestly for a normal relevance request.
 
 **Alternatives considered:**
 
 1. Replace deterministic ranking and filters with a model reranker. Rejected: price, stock, category, rating, and positive-brand rules must remain deterministic.
 2. Use embeddings alone. Rejected for hard proof because similarity cannot establish factual equivalence, though embeddings remain viable for soft ordering later.
 3. Call a model once per product. Rejected because it multiplies latency, cost, and failure surface; a bounded batch per intent is preferable.
-4. Enable the judge immediately in production results. Rejected until labelled evaluation demonstrates precision and exact-evidence validation.
+4. Treat every semantically related product as satisfying the feature. Rejected because related evidence is not verification and would mislead the shopper.
+5. Hide every non-supported product. Rejected for normal relevance requests because it discards useful alternatives; retained when the shopper explicitly asks for only verified matches.
 
-**Risks and gates:** Exact evidence spans must be verified against trusted fields; confidence is not proof; provider failure falls back to the lexical baseline; unknown fails closed for hard requirements. Local LiteLLM reduces external cost but may have weaker schema reliability and hardware-dependent latency. Hosted OpenAI may be more reliable but adds network latency and usage cost.
+**Score policy:** Evidence tier is the primary order and cannot be overridden by a score. The model relevance score orders products only within the same tier; deterministic lexical score breaks ties. Confidence describes the model assessment, not product truth. Every non-unknown claim requires a validated catalog quote.
 
-**Why this branch is separate:** The committed baseline already has independently verified fail-closed behavior. Keeping the semantic judge local and observational lets us measure schema reliability, evidence accuracy, latency, and disagreement without placing the assignment submission or current shopper behavior at risk.
+**Risks and gates:** Exact evidence spans must be verified against trusted fields; similarity, relevance score and confidence are not proof; provider timeout or invalid output falls back to the existing lexical/evidence behavior; explicit only-verified requests fail closed. Hosted OpenAI adds latency and usage cost, so the batch is bounded and evaluated once per intent.
+
+**Why this branch is separate:** The committed baseline already has independently verified fail-closed behavior. The visible reranker needs labelled live QA before it can be considered for the submission or production path.
 
 ## Decisions still requiring evidence or confirmation
 

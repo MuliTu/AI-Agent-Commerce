@@ -185,20 +185,21 @@ Execute the five bounded tasks in `QA_REMEDIATION_TASKS_2026-10-30.md`, integrat
 
 ## Local semantic-evidence experiment (separate branch, not submission baseline)
 
-**Status (October 31):** Active on local-only branch `local/semantic-evidence-shadow`, based on verified baseline commit `828f4e8`. The branch must not be pushed or enabled in the running baseline without a separate decision.
+**Status (October 31):** Active on local-only branch `local/semantic-evidence-shadow`, based on verified baseline commit `828f4e8`. Direction changed from observation-only to a user-visible evidence-tier reranker using the existing assignment OpenAI configuration. The branch must not be pushed, merged, or deployed without a separate decision.
 
-1. Add a provider-neutral semantic evaluator interface and strict structured result schema: product ID, requirement, `supported | contradicted | unknown`, confidence, and exact catalog evidence.
+1. Add a provider-neutral semantic evaluator interface and strict structured result schema: product ID, requirement, `supported | partial | contradicted | unknown`, confidence, relevance score, and exact catalog evidence.
 2. Insert the experiment after deterministic hard filtering and before final soft ranking. Never let the evaluator restore a product removed by price, stock, rating, category, or brand constraints.
-3. Run in shadow mode by default: record bounded diagnostics and disagreements while keeping baseline user-visible results unchanged.
-4. Reuse the existing OpenAI-compatible model factory for both hosted OpenAI and the local LiteLLM/Ollama route; do not add credentials or change persistent network configuration.
-5. Validate every returned evidence quote as an exact substring of trusted title, description, or tags. Treat confidence and similarity as advisory, never proof.
-6. Add deterministic evaluator fixtures for supported, contradicted, unknown, malformed output, provider failure, synonym ambiguity, and multi-intent isolation.
-7. If the local model is already reachable, run a bounded smoke evaluation and record the exact model/endpoint label without exposing credentials. Otherwise report the connection blocker and keep offline tests green.
-8. Compare precision-first hard-evidence behavior separately from soft reranking quality. Do not enable result-changing semantic decisions without labelled evaluation and explicit approval.
+3. After hard filtering, order normal relevance results by evidence tier (`supported`, `partial`, `unknown`) and then by bounded semantic relevance score; exclude `contradicted`.
+4. Preserve strict exclusion for explicit only-verified requests. Related or unknown products must never be labeled as verified.
+5. Reuse the existing configured OpenAI provider and assignment credential without printing, copying, or changing it. Keep the provider abstraction compatible with LiteLLM/Ollama for later work.
+6. Validate every returned evidence quote as an exact substring of trusted title, description, or tags. Treat confidence and similarity as advisory, never proof.
+7. Add deterministic evaluator fixtures for supported, partial, contradicted, unknown, malformed output, provider timeout, synonym ambiguity, scoring boundaries, multi-intent isolation, strict-only behavior, and UI labels.
+8. Prepare 15 creative ambiguous/colloquial prompts against real catalog fields for independent QA. Do not run this live matrix during implementation.
+9. Run static, unit/integration, build, and Playwright gates. Independent QA then runs the 15 live OpenAI cases and records expected versus actual tiers, scores, ordering, latency, and fallback behavior.
 
 ### Experiment exit criteria
 
-- Offline tests prove schema validation, exact-quote validation, provider-failure fallback, multi-intent isolation, and unchanged baseline results.
+- Offline tests prove schema validation, exact-quote validation, provider-failure fallback, multi-intent isolation, tier ordering, strict-only filtering, and visible labels.
 - The evaluator observes only bounded post-filter candidates and cannot restore a product removed by deterministic constraints.
 - Any local LiteLLM/Ollama smoke run reports availability and behavior without changing credentials or persistent configuration.
-- A local commit records the experiment; no remote branch, merge, deployment, or user-visible enablement occurs.
+- A local commit records the experiment; no remote branch, merge, or deployment occurs.

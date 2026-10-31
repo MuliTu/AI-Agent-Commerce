@@ -147,7 +147,7 @@ test('single intent returns catalog-grounded products', async ({ page }) => {
   await runExample(page, 'Single intent');
   await expect(page.getByRole('heading', { name: 'Find a catalog product' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Apple MacBook Pro 14 Inch Space Grey' })).toBeVisible();
-  await expect(page.getByText(/I found \d+ catalog-backed options?, ordered by match\./)).toBeVisible();
+  await expect(page.getByText(/I found \d+ catalog-backed options?, ordered by relevance and evidence tier\./)).toBeVisible();
 });
 
 test('a broken catalog image is replaced by an accessible fallback', async ({ page }) => {

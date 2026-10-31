@@ -26,13 +26,18 @@ export { evaluateClarification, selectTurnClarification, type Clarification } fr
 export {
   semanticEvidenceAssessmentSchema,
   semanticEvidenceBatchSchema,
+  SEMANTIC_EVIDENCE_MAX_ASSESSMENTS,
   validateSemanticEvidenceBatch,
-  runSemanticEvidenceShadow,
+  runSemanticEvidenceEvaluation,
+  applySemanticEvidenceRanking,
+  semanticEvidenceCandidateLimit,
+  requiresOnlyVerifiedEvidence,
   type SemanticEvidenceAssessment,
   type SemanticEvidenceBatch,
   type SemanticEvidenceEvaluator,
   type SemanticEvidenceInput,
-  type SemanticEvidenceShadowReport,
+  type SemanticEvidenceReport,
+  type SemanticProductRelevance,
 } from './semantic-evidence';
 export {
   createProviderSemanticEvidenceEvaluator,

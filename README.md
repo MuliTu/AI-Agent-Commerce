@@ -54,7 +54,26 @@ Category-first retrieval was chosen because phrases such as “phone for photogr
 
 For explicit feature-proof requests, exact catalog evidence is deliberately stricter than general relevance. Curated capabilities can use reviewed synonyms, while an unseen feature uses conservative lexical evidence and returns an honest empty result when the catalog does not establish it. The rejected shortcut was treating semantic similarity as proof: “satellite SOS” may be related to “satellite calling” without proving voice-call support.
 
-The local-only `local/semantic-evidence-shadow` experiment adds a model-assisted evidence judge after deterministic hard filtering. It returns `supported`, `contradicted`, or `unknown` with bounded confidence and exact title/description/tag quotes; application code verifies every quote. The observation is diagnostic only and cannot change visible products. It reuses the configured OpenAI-compatible provider, including the existing LiteLLM/Ollama route. Provider failure or invalid evidence leaves the lexical baseline unchanged. This branch is an alternative evaluation build, not the pushed submission baseline, and it still needs a labelled evaluation set before any result-changing use.
+The local-only `local/semantic-evidence-shadow` experiment adds a model-assisted relevance and evidence stage after deterministic hard filtering. It returns `supported`, `partial`, `contradicted`, or `unknown`, bounded confidence, a relevance score, and exact title/description/tag quotes. Application code verifies every quote. Normal results show verified matches first, related-but-not-verified products next, and unknown products last; contradicted products are removed. “Only verified” requests remain strict. Provider failure or invalid evidence falls back to the existing deterministic behavior. This branch uses the existing assignment OpenAI configuration, remains unpushed, and still needs independent live evaluation.
+
+```mermaid
+flowchart TD
+  U[Shopper message] --> P[Intent model: structured product goals]
+  P --> R[DummyJSON retrieval per intent]
+  R --> H[Deterministic hard filters: category, price, stock, rating, brand]
+  H --> E[OpenAI evidence and relevance batch]
+  E --> V[Validate schema and exact catalog quotes]
+  V -->|valid| T[Evidence tiers: supported / partial / unknown; contradicted removed]
+  T --> S[Sort: tier, semantic relevance score, lexical tie-break]
+  S --> D[Typed product cards with verified / related / unknown labels]
+  V -->|timeout, provider error, or invalid evidence| F[Deterministic lexical/evidence fallback]
+  F --> D
+  U -->|explicit only verified| X[Strict supported-only gate]
+  T --> X
+  X --> D
+```
+
+The intent model decides what to search for; it does not author products. DummyJSON remains the product source. The second model evaluates only retrieved catalog text and cannot bypass hard filters. Its score influences order only within an evidence tier, while exact evidence determines whether a product may be called verified.
 
 Two alternatives were rejected for this assignment:
 

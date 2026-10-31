@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { productSchema, type Constraints, type ShoppingIntent, type TurnStatus } from '../domain/contracts';
 import type { RankedProduct } from '../ranking';
+import type { SemanticProductRelevance } from './semantic-evidence';
 
 export const intentConstraintsSchema = z.object({
   maxPrice: z.number().nonnegative().optional(),
@@ -80,6 +81,16 @@ const matchReasonSchema = z.object({
   value: z.string(),
 }).strict();
 
+const semanticProductRelevanceSchema = z.object({
+  tier: z.enum(['supported', 'partial', 'unknown']),
+  score: z.number().min(0).max(1),
+  confidence: z.number().min(0).max(1),
+  evidence: z.array(z.object({
+    field: z.enum(['title', 'description', 'tags']),
+    quote: z.string().trim().min(1).max(500),
+  }).strict()).max(4),
+}).strict();
+
 export const orchestrationResultSchema = z.object({
   turnId: z.string().trim().min(1),
   status: z.enum(['queued', 'running', 'completed', 'partial', 'failed']),
@@ -90,6 +101,7 @@ export const orchestrationResultSchema = z.object({
       product: productSchema,
       score: z.number(),
       matchReasons: z.array(matchReasonSchema),
+      semanticRelevance: semanticProductRelevanceSchema.optional(),
     }).strict()),
     clarification: z.object({
       field: z.enum(['maxPrice', 'minRating', 'category', 'inStock', 'brands', 'requiredTags', 'query']),
@@ -110,7 +122,7 @@ export type ExtractedIntent = z.infer<typeof extractedIntentSchema>;
 
 export type IntentOutcome = {
   intent: ShoppingIntent;
-  products: RankedProduct[];
+  products: Array<RankedProduct & { semanticRelevance?: SemanticProductRelevance }>;
   clarification?: import('./clarification').Clarification;
   error?: {
     code: string;

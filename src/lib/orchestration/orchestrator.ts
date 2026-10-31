@@ -21,9 +21,12 @@ import {
 import { decideFollowUpTargets, inspectPlanCategoryCoverage, isExclusiveNamedFollowUp } from './plan-integrity';
 import { classifyIntentRequest } from './request-classification';
 import {
-  runSemanticEvidenceShadow,
+  applySemanticEvidenceRanking,
+  semanticEvidenceCandidateLimit,
+  requiresOnlyVerifiedEvidence,
+  runSemanticEvidenceEvaluation,
   type SemanticEvidenceEvaluator,
-  type SemanticEvidenceShadowReport,
+  type SemanticEvidenceReport,
 } from './semantic-evidence';
 import {
   intentHasExplicitUsdBudget,
@@ -54,7 +57,8 @@ export type IntentOrchestratorOptions = {
   resultLimit?: number;
   retryOptions?: RetryOptions;
   semanticEvidenceEvaluator?: SemanticEvidenceEvaluator;
-  observeSemanticEvidence?: (report: SemanticEvidenceShadowReport) => void;
+  observeSemanticEvidence?: (report: SemanticEvidenceReport) => void;
+  semanticEvidenceTimeoutMs?: number;
 };
 
 export type OrchestrateTurnInput = {
@@ -66,29 +70,36 @@ export type OrchestrateTurnInput = {
   clarification?: ClarificationAnswer;
 };
 
-const SEMANTIC_SHADOW_TIMEOUT_MS = 2_000;
+const SEMANTIC_RERANK_TIMEOUT_MS = 8_000;
+const SEMANTIC_RERANK_CANDIDATE_LIMIT = 12;
 
-function observeSemanticShadow(input: {
+async function evaluateSemanticRelevance(input: {
   evaluator: SemanticEvidenceEvaluator;
   products: Product[];
   requirements: ReturnType<typeof requestedFeatureEvidenceForIntent>;
-  observer?: (report: SemanticEvidenceShadowReport) => void;
-}): void {
+  observer?: (report: SemanticEvidenceReport) => void;
+  timeoutMs: number;
+}): Promise<SemanticEvidenceReport> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
-  const timeoutReport = new Promise<SemanticEvidenceShadowReport>((resolve) => {
-    timeout = setTimeout(() => resolve({ status: 'failed', code: 'evaluation_failed' }), SEMANTIC_SHADOW_TIMEOUT_MS);
+  const timeoutReport = new Promise<SemanticEvidenceReport>((resolve) => {
+    timeout = setTimeout(() => resolve({ status: 'failed', code: 'evaluation_failed' }), input.timeoutMs);
     timeout.unref?.();
   });
-  void Promise.race([
-    runSemanticEvidenceShadow({
+  const report = await Promise.race([
+    runSemanticEvidenceEvaluation({
       evaluator: input.evaluator,
       products: input.products,
       requirements: input.requirements,
     }),
     timeoutReport,
-  ]).then((report) => input.observer?.(report)).finally(() => {
-    if (timeout) clearTimeout(timeout);
-  }).catch(() => undefined);
+  ]);
+  if (timeout) clearTimeout(timeout);
+  try {
+    input.observer?.(report);
+  } catch {
+    // Diagnostics cannot make an otherwise valid shopper request fail.
+  }
+  return report;
 }
 
 function clarificationUpdate(answer: ClarificationAnswer, prior: IntentOutcome): ExtractedIntent {
@@ -310,6 +321,9 @@ function evidenceAwareResponse(prompt: string, outcomes: IntentOutcome[], isHebr
 export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
   const handlers = createCatalogToolHandlers(options.catalog);
   if (options.resultLimit !== undefined) z.number().int().min(1).max(1_000).parse(options.resultLimit);
+  const semanticEvidenceTimeoutMs = z.number().int().min(1).max(30_000).parse(
+    options.semanticEvidenceTimeoutMs ?? SEMANTIC_RERANK_TIMEOUT_MS,
+  );
 
   return {
     async run(input: OrchestrateTurnInput): Promise<OrchestrationResult> {
@@ -643,20 +657,73 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
             intentCount: planned.length,
             availableCategories,
           });
-          if (options.semanticEvidenceEvaluator && featureRequirements.length > 0) {
-            const shadowCandidates = rankCatalogProducts(result.products, {
-              query: intent.query,
-              constraints: intent.constraints,
-              limit: 5,
-            }).map(({ product }) => product);
-            if (shadowCandidates.length > 0) {
-              observeSemanticShadow({
+          const hardFiltered = rankCatalogProducts(result.products, {
+            query: intent.query,
+            constraints: intent.constraints,
+            limit: undefined,
+          });
+          const semanticRequirements = featureRequirements.length > 0
+            ? featureRequirements
+            : [{ label: intent.query, alternatives: [] as readonly string[] }];
+          const semanticCandidateLimit = semanticEvidenceCandidateLimit(
+            semanticRequirements.length,
+            SEMANTIC_RERANK_CANDIDATE_LIMIT,
+          );
+          if (options.semanticEvidenceEvaluator && hardFiltered.length > 0 && semanticCandidateLimit > 0) {
+            const semanticCandidates = hardFiltered.slice(0, semanticCandidateLimit);
+            const report = await evaluateSemanticRelevance({
                 evaluator: options.semanticEvidenceEvaluator,
-                products: shadowCandidates,
-                requirements: featureRequirements,
+                products: semanticCandidates.map(({ product }) => product),
+                requirements: semanticRequirements,
                 observer: options.observeSemanticEvidence,
+                timeoutMs: semanticEvidenceTimeoutMs,
+            });
+            if (report.status === 'completed') {
+              const ranked = applySemanticEvidenceRanking({
+                ranked: semanticCandidates,
+                assessments: report.assessments,
+                onlyVerified: requiresOnlyVerifiedEvidence(promptResult.data),
               });
+              const evaluatedIds = new Set(semanticCandidates.map(({ product }) => product.id));
+              const unevaluated = requiresOnlyVerifiedEvidence(promptResult.data)
+                ? []
+                : hardFiltered.filter(({ product }) => !evaluatedIds.has(product.id)).map((product) => ({
+                    ...product,
+                    semanticRelevance: { tier: 'unknown' as const, score: 0, confidence: 0, evidence: [] },
+                  }));
+              const products = [...ranked, ...unevaluated];
+              if (products.length === 0) {
+                return {
+                  intent: { ...intent, status: 'completed' },
+                  products: [],
+                  error: {
+                    code: 'catalog_evidence_unavailable',
+                    message: 'The catalog does not verify the requested feature.',
+                    retryable: false,
+                  },
+                };
+              }
+              const clarification = evaluateClarification(intent, products, availableCategories);
+              if (clarification) {
+                return {
+                  intent: { ...intent, status: 'needs_clarification' },
+                  products: [],
+                  clarification,
+                };
+              }
+              return { intent: { ...intent, status: 'completed' }, products };
             }
+          }
+          if (requiresOnlyVerifiedEvidence(promptResult.data) && featureRequirements.length === 0) {
+            return {
+              intent: { ...intent, status: 'completed' },
+              products: [],
+              error: {
+                code: 'catalog_evidence_unavailable',
+                message: 'The catalog does not provide deterministic evidence for the requested verified-only feature.',
+                retryable: false,
+              },
+            };
           }
           const evidenceProducts = filterProductsByFeatureEvidence(result.products, featureRequirements);
           const products = rankCatalogProducts(evidenceProducts, {

@@ -4,7 +4,7 @@ import { parseEnvironment } from '../config/environment';
 import { createIntentOrchestrator } from './orchestrator';
 import { createProviderIntentExtractor } from './provider';
 import { createProviderSemanticEvidenceEvaluator } from './semantic-evidence-provider';
-import type { SemanticEvidenceShadowReport } from './semantic-evidence';
+import type { SemanticEvidenceReport } from './semantic-evidence';
 import type { OrchestrationResult } from './contracts';
 import type { ClarificationAnswer } from './contracts';
 
@@ -32,7 +32,7 @@ export async function runLiveOrchestration(input: {
     catalog,
     extractIntents,
     semanticEvidenceEvaluator,
-    observeSemanticEvidence: (report: SemanticEvidenceShadowReport) => {
+    observeSemanticEvidence: (report: SemanticEvidenceReport) => {
       if (process.env.NODE_ENV === 'test') return;
       const summary = report.status === 'completed'
         ? {
@@ -44,7 +44,7 @@ export async function runLiveOrchestration(input: {
             }), {}),
           }
         : report;
-      console.info('semantic_evidence_shadow', JSON.stringify(summary));
+      console.info('semantic_evidence_rerank', JSON.stringify(summary));
     },
   }).run(input);
 }
