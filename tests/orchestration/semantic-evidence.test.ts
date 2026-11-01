@@ -80,7 +80,7 @@ describe('semantic evidence relevance evaluation', () => {
     });
   });
 
-  it('repairs direct supported evidence, downgrades inconsistent contradictions, and rejects incomplete batches', () => {
+  it('repairs direct supported evidence, overrides inconsistent contradictions, and rejects incomplete batches', () => {
     expect(validateSemanticEvidenceBatch({
       assessments: [{
         productId: 1,
@@ -103,7 +103,7 @@ describe('semantic evidence relevance evaluation', () => {
         evidence: [],
       }],
     }, { products: [phone], requirements })).toMatchObject({
-      assessments: [{ verdict: 'unknown', evidence: [] }],
+      assessments: [{ verdict: 'supported', evidence: [expect.any(Object)] }],
     });
     expect(() => validateSemanticEvidenceBatch({ assessments: [] }, {
       products: [phone], requirements,
@@ -370,6 +370,18 @@ describe('semantic evidence relevance evaluation', () => {
     expect(slimResult.assessments[0].verdict).toBe('supported');
     expect(slimResult.assessments[0].evidence[0]).toMatchObject({ field: 'description', quote: expect.stringContaining('slim') });
     expect(satelliteResult.assessments[0].verdict).toBe('partial');
+  });
+
+  it('does not promote an exact requested phrase when the catalog explicitly negates it', () => {
+    const negated: Product = {
+      ...phone,
+      id: 23,
+      description: 'This phone does not support satellite calling.',
+    };
+    const result = validateSemanticEvidenceBatch({
+      assessments: [{ productId: 23, requirement: 'satellite calling', verdict: 'contradicted', confidence: 0.99, relevanceScore: 0, evidence: [{ field: 'description', quote: 'does not support satellite calling' }] }],
+    }, { products: [negated], requirements: [{ label: 'satellite calling', alternatives: ['satellite calling'] }] });
+    expect(result.assessments[0]).toMatchObject({ verdict: 'contradicted' });
   });
 
   it('keeps the real-shaped Huawei slim laptop in strict verified-only mode', async () => {

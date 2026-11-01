@@ -65,6 +65,16 @@ function containsNormalizedPhrase(haystack: string, needle: string): boolean {
   return needle.length > 0 && ` ${haystack} `.includes(` ${needle} `);
 }
 
+function containsPositivePhrase(value: string, phrase: string): boolean {
+  if (!containsNormalizedPhrase(value, phrase)) return false;
+  const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\s+/gu, '\\s+');
+  const negated = new RegExp(
+    `(?:^|\\s)(?:no|not|without|lacks?|missing|cannot|can\\s+not|does\\s+not|do\\s+not|non)(?:\\s+\\p{L}+){0,3}\\s+${escaped}(?:$|\\s)`,
+    'u',
+  );
+  return !negated.test(value);
+}
+
 const NON_FEATURE_TOKENS = new Set([
   'a', 'an', 'the', 'only', 'show', 'find', 'me', 'please', 'with', 'whose', 'that', 'actually',
   'verified', 'documented', 'confirmed', 'confirms', 'catalog', 'listing', 'product', 'products',
@@ -92,18 +102,19 @@ function directCatalogEvidence(
   for (const { field, values } of fields) {
     for (const value of values) {
       const normalizedValue = normalize(value);
-      const alternativeMatch = alternatives.some((alternative) => containsNormalizedPhrase(normalizedValue, alternative));
+      const alternativeMatch = alternatives.some((alternative) => containsPositivePhrase(normalizedValue, alternative));
       if (alternativeMatch) return [{ field, quote: value.slice(0, 500) }];
     }
   }
-  const searchable = normalize(fields.flatMap(({ values }) => values).join(' '));
-  if (requiredTokens.length > 0 && requiredTokens.every((token) => containsNormalizedPhrase(searchable, token))) {
-    return fields.flatMap(({ field, values }) => values.flatMap((value) => {
+  const positiveTokenEvidence = requiredTokens.map((token) => fields.flatMap(({ field, values }) => values.flatMap((value) => {
       const normalizedValue = normalize(value);
-      return requiredTokens.some((token) => containsNormalizedPhrase(normalizedValue, token))
+      return containsPositivePhrase(normalizedValue, token)
         ? [{ field, quote: value.slice(0, 500) }]
         : [];
-    })).slice(0, 4);
+    })));
+  if (requiredTokens.length > 0 && positiveTokenEvidence.every((evidence) => evidence.length > 0)) {
+    return positiveTokenEvidence.flat().filter((item, index, all) => all.findIndex((candidate) =>
+      candidate.field === item.field && candidate.quote === item.quote) === index).slice(0, 4);
   }
   return undefined;
 }
@@ -147,7 +158,10 @@ export function validateSemanticEvidenceBatch(
     if (!product || !requirement) throw new Error('Semantic evidence output references an unknown product or requirement.');
     const directEvidence = directCatalogEvidence(product, requirement);
     const quotedEvidenceIsValid = assessment.evidence.every(({ field, quote }) => fieldContainsQuote(product, field, quote));
-    if (directEvidence && assessment.verdict !== 'contradicted') {
+    // Positive literal trusted catalog evidence is authoritative. A
+    // probabilistic evaluator cannot contradict an exact requested phrase,
+    // but explicitly negated phrases are never promoted.
+    if (directEvidence) {
       normalizedAssessments.push({
         ...assessment,
         verdict: 'supported',
