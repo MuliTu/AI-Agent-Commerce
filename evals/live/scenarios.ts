@@ -69,6 +69,36 @@ export const liveEvaluationScenarios: EvaluationScenario[] = [
       },
     ],
   },
+  {
+    id: 'off-catalog-flight',
+    description: 'A flight request must fail honestly without invoking a product search.',
+    tags: ['off-catalog', 'creative', 'negative'],
+    turns: [{
+      id: 'flight-only',
+      prompt: 'Find me a nonstop flight to Reykjavík next Thursday, preferably with extra legroom.',
+      expected: { outcomeCount: { min: 1 }, catalogSearches: 'forbidden', errorCodesInclude: ['outside_product_catalog'] },
+    }],
+  },
+  {
+    id: 'off-catalog-weather',
+    description: 'A weather request must not be disguised as a catalog result.',
+    tags: ['off-catalog', 'creative', 'negative'],
+    turns: [{
+      id: 'weather-only',
+      prompt: 'Will it rain in Haifa tomorrow, and should I take an umbrella?',
+      expected: { outcomeCount: { min: 1 }, catalogSearches: 'forbidden', errorCodesInclude: ['outside_product_catalog'] },
+    }],
+  },
+  {
+    id: 'mixed-catalog-and-flight',
+    description: 'A mixed request should complete the catalog intent and fail only the flight sibling.',
+    tags: ['off-catalog', 'creative', 'multi-intent', 'partial-failure'],
+    turns: [{
+      id: 'phone-plus-flight',
+      prompt: 'Show me a smartphone under $500, and also book a flight to the moon with a window seat.',
+      expected: { outcomeCount: { min: 2 }, completedOutcomeCount: { min: 1 }, catalogSearches: 'required', categoriesInclude: ['smartphones'], maxPriceAtMost: 500, errorCodesInclude: ['outside_product_catalog'] },
+    }],
+  },
   ...[
     ['Q01-camera-phone-metaphor', 'A pocket camera that also happens to be a phone, under $700.', { categoriesInclude: ['smartphones'], maxPriceAtMost: 700, semanticEvidence: { required: true, fallback: 'forbidden', ordering: 'tier_score_baseline', exactQuotes: true } }],
     ['Q02-hebrew-selfie-specificity', 'אני רוצה טלפון לסלפי חד ומחמיא, עד 400 דולר — לא סתם טלפון עם מצלמה.', { categoriesInclude: ['smartphones'], maxPriceAtMost: 400, semanticEvidence: { required: true, fallback: 'forbidden', ordering: 'tier_score_baseline', exactQuotes: true } }],

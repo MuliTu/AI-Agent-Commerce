@@ -1025,12 +1025,17 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
         : plan.intents;
       const planned = drafts.map((draft) => {
         const draftContext = `${draft.goal ?? ''} ${draft.query ?? ''} ${draft.constraints.category ?? ''}`;
-        const outsideProductCatalog = classifyIntentRequest({
+        const trustedDraftCategory = resolveCatalogCategory(
+          draft.constraints.category,
+          draftContext,
+          availableCategories,
+        );
+        const outsideProductCatalog = !trustedDraftCategory && (classifyIntentRequest({
           prompt: promptResult.data,
           intentContext: draftContext,
           intentCount: drafts.length,
           availableCategories,
-        }) === 'outside_catalog' || intentIsOutsideProductCatalog(promptResult.data, draftContext, drafts.length);
+        }) === 'outside_catalog' || intentIsOutsideProductCatalog(promptResult.data, draftContext, drafts.length));
         const safeDraft = outsideProductCatalog ? {
           ...draft,
           intentId: undefined,
@@ -1126,11 +1131,11 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
           intentCount: planned.length,
           availableCategories,
         });
-        const finalOutsideCatalog = finalClassification === 'outside_catalog' || intentIsOutsideProductCatalog(
+        const finalOutsideCatalog = !intent.constraints.category && (finalClassification === 'outside_catalog' || intentIsOutsideProductCatalog(
           promptResult.data,
           `${intent.goal} ${intent.query}`,
           planned.length,
-        );
+        ));
         if (intent.status === 'failed' && !intent.constraints.category && !finalOutsideCatalog) {
           return {
             intent,

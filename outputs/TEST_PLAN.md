@@ -228,3 +228,11 @@ Before submission:
 - Recreate repository and service instances between selected turns, verify paused/active/focus state from disk, and replay identical turn IDs to prove idempotency without duplicate actions or products.
 - Live-provider absence, catalog capture gaps or changed acceptance criteria produce `INCONCLUSIVE`; a judge never overrides a deterministic failure. Record call counts/usage when exposed and do not silently substitute mocks.
 - Exercise default same-model judging and configured alternate-model judging without recording credentials. Assert the artifact's provider/model-independence flags, and report additional judge cost, latency and calibration variance rather than treating independence as correctness.
+# Recovery regression matrix — 2026-11-01
+
+- Category-qualified ordinal after a topic switch: exact historical product, zero new search.
+- “That phone” after service recreation: exact persisted selection, zero new search.
+- Same ordinal across two lists: exact IDs; unavailable position clarifies.
+- Repeated selection, changed display order, duplicate categories, inactive history, corrupt state, unrelated anaphora, and ordinal false positives.
+- Harness prior-turn catalog evidence: full-field grounding or `INCONCLUSIVE` when capture is incomplete.
+- Real-provider suite: original 19 scenarios / 23 turns plus flight-only, weather-only, and mixed phone/flight cases.

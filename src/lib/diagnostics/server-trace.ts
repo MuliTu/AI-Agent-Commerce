@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { OrchestrationResult } from '../orchestration/contracts';
+import type { IntentPlanSummary } from './intent-plan-summary';
 
 export type ServerDiagnosticLevel = 'off' | 'summary' | 'verbose';
 
@@ -124,6 +125,30 @@ export function createServerDiagnosticReporter(input: {
         },
         retry: metadata.retryIntentId !== undefined,
         clarification: metadata.hasClarification,
+      });
+    },
+    context(input: {
+      previous?: OrchestrationResult;
+      pausedOutcomes?: OrchestrationResult['outcomes'];
+      hasDisplayedReference: boolean;
+    }) {
+      emit({
+        stage: 'context_projection',
+        conversationSummaryStage: 'not_present',
+        previousIntentCount: input.previous?.outcomes.length ?? 0,
+        previousIntentIds: input.previous?.outcomes.map(({ intent }) => hash(intent.id, 10)) ?? [],
+        pausedIntentCount: input.pausedOutcomes?.length ?? 0,
+        hasDisplayedReference: input.hasDisplayedReference,
+      });
+    },
+    providerPlan(input: { provider: string; model: string; summary: IntentPlanSummary }) {
+      emit({
+        stage: 'provider_plan_parsed',
+        provider: bounded(input.provider, 32),
+        model: bounded(input.model, 120),
+        intentCount: input.summary.intentCount,
+        response: input.summary.response,
+        intents: input.summary.intents,
       });
     },
     decision(event: OrchestrationDecisionDiagnostic) {

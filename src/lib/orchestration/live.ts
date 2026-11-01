@@ -31,12 +31,24 @@ export async function runLiveOrchestration(input: {
       false,
     );
   }
-  const extractIntents = createProviderIntentExtractor({ environment });
-  const semanticEvidenceEvaluator = createProviderSemanticEvidenceEvaluator({ environment });
   const serverDiagnostics = createServerDiagnosticReporter({
     conversationId: input.conversationId,
     turnId: input.turnId,
   });
+  serverDiagnostics.context({
+    previous: input.previous,
+    pausedOutcomes: input.pausedOutcomes,
+    hasDisplayedReference: input.displayedProductReference !== undefined,
+  });
+  const extractIntents = createProviderIntentExtractor({
+    environment,
+    observePlan: (summary) => serverDiagnostics.providerPlan({
+      provider: environment.LLM_PROVIDER,
+      model: environment.LLM_MODEL ?? 'unknown',
+      summary,
+    }),
+  });
+  const semanticEvidenceEvaluator = createProviderSemanticEvidenceEvaluator({ environment });
   const observeDecision = (event: OrchestrationDecisionDiagnostic) => {
     serverDiagnostics.decision(event);
     input.observeDecision?.(event);

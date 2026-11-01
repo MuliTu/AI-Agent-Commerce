@@ -276,3 +276,8 @@ This log records current decisions and proposals. “Accepted” means accepted 
 **Judge independence:** The live harness accepts an explicit judge provider/model configuration while defaulting to the already configured application provider/model. Artifacts truthfully record execution independence, provider independence and model independence separately. A different model on the same provider is model-independent but not provider-independent; the default is neither. Deterministic failures remain authoritative in every configuration.
 
 **Limits:** A distinct judge may improve calibration but adds another paid call, latency and model-specific variance per turn. It does not make a subjective verdict objective. No distinct credential or provider is provisioned by the harness; operators must explicitly supply an already authorized configuration, and absence/unavailability remains `INCONCLUSIVE`.
+# Recovery decision — 2026-11-01
+
+The missing temporary worktree could not be recovered byte-for-byte from Git objects, IDE history, snapshots, task artifacts, or sourcemaps. Submission-critical behavior was reconstructed from commit `ea607c2`, durable evaluation artifacts, retained review evidence, and new regression tests in a stable project-local worktree. Reports must call this a reconstruction, not an exact recovery.
+
+Trusted category grounding takes precedence when words such as “weather” describe a catalog product use case (for example, a fragrance for cold weather). A request remains off-catalog only when no trusted product category is resolved for that intent. This avoids phrase-specific fixes while preserving flight/weather-only failures.

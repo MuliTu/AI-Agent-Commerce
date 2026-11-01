@@ -325,3 +325,10 @@ This section applies only to `local/semantic-evidence-shadow`; it is not part of
 - Contextual negation such as “not just,” “without paying flagship money,” “not a daytime freshie,” Hebrew `לא סתם`, and `לא זוכרת` is not a brand exclusion. Natural catalog terms such as shoes, basketball shoes, scent, perfume, makeup, lashes, and mascara resolve to the appropriate trusted category when unambiguous.
 - The configured assignment OpenAI provider is used on this local experiment branch without copying or changing its credential. The same provider abstraction remains compatible with LiteLLM/Ollama.
 - Fifteen creative ambiguous or colloquial real-catalog prompts are prepared for separate live QA; implementation does not self-certify them.
+# Recovery acceptance addendum — 2026-11-01
+
+- Historical ordinals resolve exact persisted product IDs and order without a new catalog search.
+- Multi-group ordinals require unambiguous active display groups; missing positions clarify with schema-valid choices.
+- Selected-product follow-ups survive repository/service recreation and cannot be synthesized from stale state.
+- Product-category evidence overrides incidental off-catalog vocabulary inside the same grounded intent; true flight/weather intents remain scoped failures.
+- Live evaluation records exact candidate revision, provider/model, actual catalog boundary evidence, state transitions, deterministic assertions, judge result, usage when exposed, and durable artifact paths.

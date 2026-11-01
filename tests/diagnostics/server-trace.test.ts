@@ -35,6 +35,11 @@ describe('correlated server diagnostics', () => {
       environment: { NODE_ENV: 'development', BAZAK_SERVER_DIAGNOSTICS: 'summary' }, write,
     });
     reporter.request('Find perfume for api_key=private-value', { hasClarification: false });
+    reporter.context({ previous: result, pausedOutcomes: [], hasDisplayedReference: false });
+    reporter.providerPlan({
+      provider: 'openai', model: 'gpt-5.4-mini',
+      summary: { intentCount: 1, response: { language: 'en', length: 10 }, intents: [{ index: 0, hasIntentId: false, status: 'ready', categoryPresent: true, category: 'fragrances', constraintKeys: ['category'], goalLength: 10, queryLength: 10 }] },
+    });
     reporter.decision({
       stage: 'catalog_boundary', operation: '/products/search', attempt: 1, method: 'GET',
       pathname: '/products/search', query: { q: 'private shopper search', limit: '20', skip: '0' },
@@ -42,12 +47,14 @@ describe('correlated server diagnostics', () => {
     });
     reporter.result(result);
 
-    expect(write).toHaveBeenCalledTimes(3);
+    expect(write).toHaveBeenCalledTimes(5);
     const output = write.mock.calls.flat().join('\n');
     expect(output).toContain('bazak_server_diagnostic');
     expect(output).toContain(reporter.traceId);
     expect(output).toContain('request_received');
     expect(output).toContain('result_completed');
+    expect(output).toContain('"conversationSummaryStage":"not_present"');
+    expect(output).toContain('provider_plan_parsed');
     expect(output).toContain('"productIds":[7]');
     expect(output).not.toContain('private-value');
     expect(output).not.toContain('Find perfume');

@@ -259,3 +259,10 @@ Stop and request approval if implementation requires another LLM call, a destruc
 7. Verify migration compatibility, restart recovery, idempotent retry, additive multi-intent behavior, ordinal selection, price order, static checks, build and browser regression gates.
 
 **Rollback boundary:** v5 rejects an applied migration marker it does not know, so code rollback is not automatic. Stop all application writers, back up the SQLite file, and transactionally delete only `schema_migrations.version = 6`; retain both additive tables and every row. The v5 application then starts while ignoring the retained tables. Migration 6 uses `IF NOT EXISTS`, so roll-forward records the marker again without replacing state or decision data. This procedure is covered by a rollback/roll-forward repository test.
+# Submission recovery addendum — 2026-11-01
+
+1. Preserve the dirty main checkout and rebuild on a stable isolated branch.
+2. Restore durable display groups, selected references, strict harness grounding, and failed manual regressions.
+3. Run deterministic unit/integration, harness, build, and Playwright gates.
+4. Run the original 23 live turns plus bounded flight/weather/mixed creative cases with real OpenAI and DummyJSON.
+5. Store raw artifacts and a human-readable consolidated report under project-local `var/evaluations/live-ai/`.

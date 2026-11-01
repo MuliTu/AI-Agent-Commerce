@@ -72,6 +72,31 @@ function catalog(search = vi.fn(async ({ query }: { query: string }) =>
 }
 
 describe('single-agent multi-intent orchestration', () => {
+  it('keeps a trusted fragrance category when weather language describes the product use case', async () => {
+    const client = catalog();
+    const orchestrator = createIntentOrchestrator({
+      catalog: client,
+      extractIntents: async () => ({
+        response: 'Warm fragrances.',
+        intents: [{
+          goal: 'Warm cozy fragrance for cold weather',
+          query: 'fragrance warm cozy evening cold weather',
+          constraints: { category: 'fragrances' },
+        }],
+      }),
+    });
+    const result = await orchestrator.run({
+      turnId: 'cold-weather-fragrance',
+      conversationId: 'cold-weather-fragrance',
+      prompt: 'Warm, cozy scent for a cold evening; show close alternatives after exact matches.',
+    });
+    expect(result.outcomes[0]).toMatchObject({
+      intent: { constraints: { category: 'fragrances' }, status: 'completed' },
+      products: [{ product: { id: fragrance.id } }],
+    });
+    expect(client.listProductsByCategory).toHaveBeenCalledWith('fragrances', expect.any(Object));
+  });
+
   it('revalidates an unchanged catalog product independently of object property order', async () => {
     const client = catalog();
     client.getProduct = vi.fn(async (id: number) => {
