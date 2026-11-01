@@ -9,6 +9,8 @@ export type ClassifiedRequestSegment = {
 
 const OUTSIDE_CATALOG = /(?:\b(?:weather|forecast|temperature|flight|flights|airfare|airline|hotel|hotels|booking|bookings|news|politics|recipe|joke)\b|\b(?:explain|define|calculate|compute|solve)\b|\b(?:what\s+is|who\s+is|how\s+does|how\s+do|tell\s+me\s+about)\b|\b\d+(?:\.\d+)?\s*(?:times|multiplied\s+by|divided\s+by|plus|minus)\s*\d+(?:\.\d+)?\b|מזג\s+האוויר|תחזית|טיס(?:ה|ות)|מלונ(?:ות|ון)|הזמנ(?:ה|ות)|חדשות|פוליטיקה|מתכון|בדיחה|(?:הסבר|הגדירו?|חשב|פתור)\b|מה\s+(?:זה|הם|היא|הוא)|מי\s+(?:זה|היא|הוא)|כמה\s+זה)/iu;
 
+const RAIN_WEATHER_QUESTION = /(?:\b(?:will|could|might)\s+it\s+rain\b|\bis\s+it\s+raining\b|\b(?:chance|probability)\s+of\s+rain\b)/iu;
+
 const BROAD_PRODUCT_LANGUAGE = /(?:\b(?:buy|shop|shopping|product|products|item|items|catalog|in\s+stock|brand|price|budget)\b|\b(?:find|show|recommend|looking\s+for|i\s+need|i\s+want)\b|מוצר(?:ים)?|קטלוג|מחיר|תקציב|מותג|במלאי|לקנות|קנייה|מחפש(?:ת|ים|ות)?|צריך(?:ה|ים|ות)?|רוצה|הראה|המלץ)/iu;
 
 function normalize(value: string): string {
@@ -24,7 +26,7 @@ export function classifyRequestText(
   availableCategories: readonly string[],
 ): RequestClassification {
   const productCategory = resolveCatalogCategory(undefined, text, availableCategories);
-  const outsideCatalog = OUTSIDE_CATALOG.test(text);
+  const outsideCatalog = OUTSIDE_CATALOG.test(text) || RAIN_WEATHER_QUESTION.test(text);
   if (productCategory && outsideCatalog) return 'unknown';
   if (productCategory) return 'catalog_product';
   if (outsideCatalog) return 'outside_catalog';

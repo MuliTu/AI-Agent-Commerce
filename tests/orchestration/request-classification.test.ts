@@ -22,6 +22,12 @@ describe('deterministic request classification', () => {
     expect(classifyRequestText('Find a smartphone and tell me the weather in London', categories)).toBe('unknown');
   });
 
+  it('recognizes a direct rain forecast question without treating rain shopping language as weather', () => {
+    expect(classifyRequestText('Will it rain in Haifa tomorrow?', categories)).toBe('outside_catalog');
+    expect(classifyRequestText('Recommend rain gear for my commute', categories)).toBe('unknown');
+    expect(classifyRequestText('Show me products for rain', categories)).toBe('unknown');
+  });
+
   it.each([
     ['Find a smartphone under $300', 'catalog_product'],
     ['אני מחפש צלחות למטבח', 'catalog_product'],

@@ -97,6 +97,27 @@ describe('single-agent multi-intent orchestration', () => {
     expect(client.listProductsByCategory).toHaveBeenCalledWith('fragrances', expect.any(Object));
   });
 
+  it('does not search the catalog for dependent intents split from one weather-only request', async () => {
+    const client = catalog();
+    const orchestrator = createIntentOrchestrator({
+      catalog: client,
+      extractIntents: async () => ({
+        response: 'Weather is outside the product catalog.',
+        intents: [{ goal: 'Check weather in Haifa', query: 'Haifa weather tomorrow', constraints: {} }, {
+          goal: 'Decide whether an umbrella is needed', query: 'umbrella needed tomorrow in Haifa', constraints: {},
+        }],
+      }),
+    });
+    const result = await orchestrator.run({
+      turnId: 'weather-only', conversationId: 'weather-only',
+      prompt: 'Will it rain in Haifa tomorrow, and should I take an umbrella?',
+    });
+    expect(result.outcomes).toHaveLength(2);
+    expect(result.outcomes.some(({ error }) => error?.code === 'outside_product_catalog')).toBe(true);
+    expect(client.searchProducts).not.toHaveBeenCalled();
+    expect(client.listProductsByCategory).not.toHaveBeenCalled();
+  });
+
   it('revalidates an unchanged catalog product independently of object property order', async () => {
     const client = catalog();
     client.getProduct = vi.fn(async (id: number) => {

@@ -23,7 +23,7 @@ import {
   requestedFeatureEvidenceForIntent,
 } from './feature-evidence';
 import { coalesceAlternativeProductDrafts, decideFollowUpTargets, explicitPromptCategories, inspectPlanCategoryCoverage, isAdditiveNamedRequest, isExclusiveNamedFollowUp } from './plan-integrity';
-import { classifyIntentRequest } from './request-classification';
+import { classifyIntentRequest, classifyRequestText } from './request-classification';
 import {
   applySemanticEvidenceRanking,
   negativePreferenceTerms,
@@ -1023,6 +1023,7 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
             }]
             : plan.intents
         : plan.intents;
+      const wholePromptOutsideCatalog = classifyRequestText(promptResult.data, availableCategories) === 'outside_catalog';
       const planned = drafts.map((draft) => {
         const draftContext = `${draft.goal ?? ''} ${draft.query ?? ''} ${draft.constraints.category ?? ''}`;
         const trustedDraftCategory = resolveCatalogCategory(
@@ -1030,7 +1031,7 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
           draftContext,
           availableCategories,
         );
-        const outsideProductCatalog = !trustedDraftCategory && (classifyIntentRequest({
+        const outsideProductCatalog = !trustedDraftCategory && (wholePromptOutsideCatalog || classifyIntentRequest({
           prompt: promptResult.data,
           intentContext: draftContext,
           intentCount: drafts.length,
@@ -1131,7 +1132,7 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
           intentCount: planned.length,
           availableCategories,
         });
-        const finalOutsideCatalog = !intent.constraints.category && (finalClassification === 'outside_catalog' || intentIsOutsideProductCatalog(
+        const finalOutsideCatalog = !intent.constraints.category && (wholePromptOutsideCatalog || finalClassification === 'outside_catalog' || intentIsOutsideProductCatalog(
           promptResult.data,
           `${intent.goal} ${intent.query}`,
           planned.length,
