@@ -55,6 +55,8 @@ export async function judgeTurn(
     ...result.output,
     provider: environment.LLM_PROVIDER,
     model: environment.LLM_MODEL,
+    executionIndependent: true as const,
+    providerIndependent: false as const,
     usage: result.usage as unknown as Record<string, unknown>,
   };
 }

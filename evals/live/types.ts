@@ -12,13 +12,16 @@ export type EvaluationStatus = 'PASS' | 'FAIL' | 'INCONCLUSIVE';
 export type ObjectiveExpectation = {
   outcomeCount?: { min?: number; max?: number };
   completedOutcomeCount?: { min?: number };
+  returnedProductCount?: { min: number };
   clarification?: 'required' | 'forbidden' | 'allowed';
-  catalogCalls?: 'required' | 'forbidden' | 'allowed';
+  catalogSearches?: 'required' | 'forbidden' | 'allowed';
   categoriesInclude?: string[];
   maxPriceAtMost?: number;
   preserveActiveIntentCount?: { min: number };
   stateOperation?: 'add' | 'replace' | 'refine' | 'clarify' | 'select_product';
   selectedProductFromPreviousDisplay?: boolean;
+  focusCategory?: string;
+  activeCategoriesExclude?: string[];
 };
 
 export type EvaluationTurn = {
@@ -36,8 +39,24 @@ export type EvaluationScenario = {
 
 export type ObjectiveAssertion = {
   id: string;
-  pass: boolean;
+  status: EvaluationStatus;
   reason: string;
+};
+
+export type CatalogBoundaryCall = {
+  sequence: number;
+  requestOccurrence: number;
+  url: string;
+  method: string;
+  pathname: string;
+  query: Record<string, string>;
+  startedAt: string;
+  completedAt: string;
+  status: number | null;
+  ok: boolean;
+  rawOutput: unknown;
+  returnedProducts: ProductEvidence[];
+  error: string | null;
 };
 
 export type ProductEvidence = Pick<Product, 'id' | 'title' | 'price' | 'category'>;
@@ -58,13 +77,16 @@ export type TurnArtifact = {
   activeIntentIdsAfter: string[];
   focusBefore: string | null;
   focusAfter: string | null;
-  catalogCalls: ToolRunRecord[];
+  catalogCalls: CatalogBoundaryCall[];
+  catalogCaptureComplete: boolean;
+  catalogDecisionSummaries: ToolRunRecord[];
   returnedProducts: ProductEvidence[];
   productSnapshots: ProductSnapshotRecord[];
   response: string | null;
   result: OrchestrationResult | null;
   persistenceRecovery: {
     reopenedFromDisk: boolean;
+    serviceRecreatedForTurn: boolean;
     persistedTurnStatus: string | null;
     persistedMessageCount: number;
     stateRevision: number | null;
@@ -77,6 +99,8 @@ export type TurnArtifact = {
     criteria: Array<{ criterion: string; status: EvaluationStatus; reason: string }>;
     provider: string;
     model: string;
+    executionIndependent: true;
+    providerIndependent: false;
     usage?: Record<string, unknown>;
   };
   status: EvaluationStatus;

@@ -7,6 +7,7 @@ import { ConversationExecutionService } from '../../src/lib/execution';
 import { runLiveOrchestration } from '../../src/lib/orchestration/live';
 import { CommerceRepository } from '../../src/lib/persistence';
 import { evaluateObjectiveAssertions } from './assertions';
+import { withCatalogCapture } from './catalog-capture';
 import { judgeTurn } from './judge';
 import { liveEvaluationScenarios } from './scenarios';
 import type { EvaluationScenario, EvaluationStatus, TurnArtifact } from './types';
@@ -65,6 +66,34 @@ function isUnavailable(error: unknown): boolean {
     && (candidate.kind === 'network' || candidate.kind === 'timeout' || (typeof candidate.status === 'number' && candidate.status >= 500));
 }
 
+function resultContainsUnavailableInfrastructure(result: TurnArtifact['result']): boolean {
+  return result?.outcomes.some(({ error }) => error !== undefined && [
+    'catalog_unavailable',
+    'provider_authentication',
+    'provider_rate_limit',
+    'provider_unavailable',
+  ].includes(error.code)) ?? false;
+}
+
+function catalogCaptureShowsUnavailableInfrastructure(calls: TurnArtifact['catalogCalls']): boolean {
+  return calls.some(({ error, status }) => error !== null || status === 429 || (status !== null && status >= 500));
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, nested]) => nested !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nested]) => [key, canonicalize(nested)]),
+  );
+}
+
+function samePersistedJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(canonicalize(left)) === JSON.stringify(canonicalize(right));
+}
+
 export function createIsolatedDatabasePath(environment: NodeJS.ProcessEnv = process.env): string {
   const directory = mkdtempSync(join(tmpdir(), 'bazak-live-eval-'));
   const databasePath = join(directory, 'commerce.sqlite');
@@ -117,29 +146,30 @@ export async function runLiveEvaluation(input: { scenarios?: EvaluationScenario[
     return summary;
   }
 
-  const repository = new CommerceRepository(databasePath);
-  const service = new ConversationExecutionService(repository, runLiveOrchestration);
   const artifacts: TurnArtifact[] = [];
   const artifactPaths: string[] = [];
   let applicationTurns = 0;
   let catalogCalls = 0;
   let judgeCalls = 0;
+  let previousService: ConversationExecutionService | undefined;
 
-  try {
-    for (const scenario of scenarios) {
+  for (const scenario of scenarios) {
       const conversationId = `eval-${runId}-${safeId(scenario.id)}`;
       for (const [index, turn] of scenario.turns.entries()) {
         const turnId = `${conversationId}-${index + 1}-${safeId(turn.id)}`;
-        const stateBefore = repository.getConversationState(conversationId) ?? null;
+        const beforeReader = new CommerceRepository(databasePath);
+        const stateBefore = beforeReader.getConversationState(conversationId) ?? null;
+        beforeReader.close();
         const started = performance.now();
-        let result = null;
-        let executionError: unknown;
         applicationTurns += 1;
-        try {
-          result = await service.execute({ conversationId, turnId, prompt: turn.prompt });
-        } catch (error) {
-          executionError = error;
-        }
+        const executionRepository = new CommerceRepository(databasePath);
+        const service = new ConversationExecutionService(executionRepository, runLiveOrchestration);
+        const serviceRecreatedForTurn = previousService === undefined || previousService !== service;
+        previousService = service;
+        const captured = await withCatalogCapture(() => service.execute({ conversationId, turnId, prompt: turn.prompt }));
+        executionRepository.close();
+        const result = captured.result ?? null;
+        let executionError = captured.error;
 
         const reader = new CommerceRepository(databasePath);
         const stateAfter = reader.getConversationState(conversationId) ?? null;
@@ -149,7 +179,12 @@ export async function runLiveEvaluation(input: { scenarios?: EvaluationScenario[
         const persistedTurn = reader.getTurn(turnId);
         const messages = reader.listMessages(conversationId);
         reader.close();
-        catalogCalls += toolRuns.length;
+        catalogCalls += captured.calls.length;
+        const persistenceRecovered = result !== null
+          && persistedTurn?.result !== undefined
+          && samePersistedJson(persistedTurn.result, result)
+          && stateAfter?.lastTurnId === turnId
+          && stateAfter.revision === (stateBefore?.revision ?? 0) + 1;
 
         const transcript = messages.map(({ role, content }) => ({ role, content }));
         const returnedProducts = result?.outcomes.flatMap(({ products }) => products.map(({ product }) => ({
@@ -159,13 +194,17 @@ export async function runLiveEvaluation(input: { scenarios?: EvaluationScenario[
           category: product.category,
         }))) ?? [];
         const objectiveAssertions = result
-          ? evaluateObjectiveAssertions({ turn, result, stateBefore: stateBefore ?? undefined, stateAfter: stateAfter ?? undefined, catalogCalls: toolRuns, snapshots })
+          ? evaluateObjectiveAssertions({ turn, result, stateBefore: stateBefore ?? undefined, stateAfter: stateAfter ?? undefined, catalogCalls: captured.calls, catalogCaptureComplete: captured.captureComplete, snapshots, persistenceRecovered })
           : [];
-        const unavailable = executionError !== undefined && isUnavailable(executionError);
+        const unavailable = (executionError !== undefined && isUnavailable(executionError))
+          || resultContainsUnavailableInfrastructure(result)
+          || catalogCaptureShowsUnavailableInfrastructure(captured.calls);
         const deterministicStatus: EvaluationStatus = unavailable
           ? 'INCONCLUSIVE'
-          : executionError || objectiveAssertions.some(({ pass }) => !pass)
+          : executionError || objectiveAssertions.some(({ status }) => status === 'FAIL')
             ? 'FAIL'
+            : objectiveAssertions.some(({ status }) => status === 'INCONCLUSIVE')
+              ? 'INCONCLUSIVE'
             : 'PASS';
         const durationMs = Math.round(performance.now() - started);
         const baseArtifact = {
@@ -184,13 +223,16 @@ export async function runLiveEvaluation(input: { scenarios?: EvaluationScenario[
           activeIntentIdsAfter: stateAfter?.activeResult?.outcomes.map(({ intent }) => intent.id) ?? [],
           focusBefore: stateBefore?.currentFocusIntentId ?? null,
           focusAfter: stateAfter?.currentFocusIntentId ?? null,
-          catalogCalls: toolRuns,
+          catalogCalls: captured.calls,
+          catalogCaptureComplete: captured.captureComplete,
+          catalogDecisionSummaries: toolRuns,
           returnedProducts,
           productSnapshots: snapshots,
           response: result?.response ?? null,
           result,
           persistenceRecovery: {
-            reopenedFromDisk: true,
+            reopenedFromDisk: persistenceRecovered,
+            serviceRecreatedForTurn,
             persistedTurnStatus: persistedTurn?.status ?? null,
             persistedMessageCount: messages.length,
             stateRevision: stateAfter?.revision ?? null,
@@ -209,8 +251,9 @@ export async function runLiveEvaluation(input: { scenarios?: EvaluationScenario[
           }
         }
         const reasons = [
-          ...objectiveAssertions.filter(({ pass }) => !pass).map(({ id, reason }) => `${id}: ${reason}`),
-          ...(executionError ? [unavailable ? 'Provider or catalog unavailable; no mock was used.' : `Execution or judge error: ${executionError instanceof Error ? executionError.message : String(executionError)}`] : []),
+          ...objectiveAssertions.filter(({ status }) => status !== 'PASS').map(({ id, status, reason }) => `${status} ${id}: ${reason}`),
+          ...(unavailable ? ['Provider or catalog infrastructure was unavailable or insufficiently evidenced; no mock was used.'] : []),
+          ...(executionError && !unavailable ? [`Execution or judge error: ${executionError instanceof Error ? executionError.message : String(executionError)}`] : []),
           ...(judge ? [`Judge: ${judge.reason}`] : []),
         ];
         const effectiveJudgeStatus: EvaluationStatus | null = judge?.status ?? (executionError && result ? 'INCONCLUSIVE' : null);
@@ -228,9 +271,6 @@ export async function runLiveEvaluation(input: { scenarios?: EvaluationScenario[
         if (executionError && !unavailable && !result) break;
       }
     }
-  } finally {
-    repository.close();
-  }
 
   const status = statusFromArtifacts(artifacts);
   const statusCounts = artifacts.reduce<Record<EvaluationStatus, number>>((counts, artifact) => ({ ...counts, [artifact.status]: counts[artifact.status] + 1 }), { PASS: 0, FAIL: 0, INCONCLUSIVE: 0 });
@@ -248,4 +288,11 @@ export async function runLiveEvaluation(input: { scenarios?: EvaluationScenario[
   return summary;
 }
 
-export const liveEvaluationInternals = { combineStatus, statusFromArtifacts, isUnavailable };
+export const liveEvaluationInternals = {
+  combineStatus,
+  statusFromArtifacts,
+  isUnavailable,
+  resultContainsUnavailableInfrastructure,
+  catalogCaptureShowsUnavailableInfrastructure,
+  samePersistedJson,
+};
