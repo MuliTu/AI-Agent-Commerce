@@ -185,11 +185,84 @@ Execute the five bounded tasks in `QA_REMEDIATION_TASKS_2026-10-30.md`, integrat
 
 ## Local semantic-evidence experiment (separate branch, not submission baseline)
 
-1. Add a provider-neutral semantic evaluator interface and strict structured result schema: product ID, requirement, `supported | contradicted | unknown`, confidence, and exact catalog evidence.
+**Status (October 31):** Active on local-only branch `local/semantic-evidence-shadow`, based on verified baseline commit `828f4e8`. Direction changed from observation-only to a user-visible evidence-tier reranker using the existing assignment OpenAI configuration. The branch must not be pushed, merged, or deployed without a separate decision.
+
+1. Add a provider-neutral semantic evaluator interface and strict structured result schema: product ID, requirement, `supported | partial | contradicted | unknown`, confidence, relevance score, and exact catalog evidence.
 2. Insert the experiment after deterministic hard filtering and before final soft ranking. Never let the evaluator restore a product removed by price, stock, rating, category, or brand constraints.
-3. Run in shadow mode by default: record bounded diagnostics and disagreements while keeping baseline user-visible results unchanged.
-4. Reuse the existing OpenAI-compatible model factory for both hosted OpenAI and the local LiteLLM/Ollama route; do not add credentials or change persistent network configuration.
-5. Validate every returned evidence quote as an exact substring of trusted title, description, or tags. Treat confidence and similarity as advisory, never proof.
-6. Add deterministic evaluator fixtures for supported, contradicted, unknown, malformed output, provider failure, synonym ambiguity, and multi-intent isolation.
-7. If the local model is already reachable, run a bounded smoke evaluation and record the exact model/endpoint label without exposing credentials. Otherwise report the connection blocker and keep offline tests green.
-8. Compare precision-first hard-evidence behavior separately from soft reranking quality. Do not enable result-changing semantic decisions without labelled evaluation and explicit approval.
+3. After hard filtering, order normal relevance results by evidence tier (`supported`, `partial`, `unknown`) and then by bounded semantic relevance score; exclude `contradicted`.
+4. Preserve strict exclusion for explicit only-verified requests. Related or unknown products must never be labeled as verified.
+5. Reuse the existing configured OpenAI provider and assignment credential without printing, copying, or changing it. Keep the provider abstraction compatible with LiteLLM/Ollama for later work.
+6. Validate every returned evidence quote as an exact substring of trusted title, description, or tags. Treat confidence and similarity as advisory, never proof.
+7. Add deterministic evaluator fixtures for supported, partial, contradicted, unknown, malformed output, provider timeout, synonym ambiguity, scoring boundaries, multi-intent isolation, strict-only behavior, and UI labels.
+8. Prepare 15 creative ambiguous/colloquial prompts against real catalog fields for independent QA. Do not run this live matrix during implementation.
+9. Run static, unit/integration, build, and Playwright gates. Independent QA then runs the 15 live OpenAI cases and records expected versus actual tiers, scores, ordering, latency, and fallback behavior.
+
+### Live A/B remediation after the first 15-case run
+
+1. Broaden strict activation to natural `confirms`/documented wording and keep strict fallback fail-closed.
+2. Add deterministic evidence consistency so literal full-feature quotes (for example `slim`) cannot be rejected as merely partial, without promoting related-only evidence such as satellite SOS to satellite calling.
+3. Evaluate every product that will receive a semantic label. Remove unevaluated overflow instead of presenting it as `unknown: 0`.
+4. Persist a user-safe semantic status and disclose deterministic fallback in both API copy and UI summary.
+5. Derive response claims from actual card tiers so mixed verified/partial/unknown results cannot be described as verified-only.
+6. Fix upstream contextual-negation and category-synonym failures that prevent retrieval before reranking.
+7. Replay the same failed live cases independently and compare latency, tiers, evidence, ordering and fallback with the first A/B report.
+
+### Second live retest closure
+
+1. Extract strict adjective-before-category requirements before semantic evaluation so Q08 uses `slim`, not a planner-expanded sentence.
+2. Permit deterministic direct support to combine exact spans across title, description and tags, covering Q10's color title plus basketball description without weakening hard constraints.
+3. Add a bounded negative-preference evidence rule for Q11's reviewed daytime-fresh wording: both normalized unwanted terms must appear as complete tokens in trusted text before a product is excluded; unrelated free-form negation remains model-assessed rather than becoming a new hard filter.
+4. Match deterministic evidence at normalized token/phrase boundaries and test substring traps, over-budget slim distractors, and out-of-stock exact shoes.
+5. Keep related-only satellite evidence partial, preserve strict fail-closed behavior, and rerun Q08 plus Q10/Q11 controls independently.
+
+### Submission-comparison Q02 closure
+
+1. Extract a bounded high-quality-selfie requirement from explicit English or Hebrew selfie-quality wording, rather than passing only a broad provider-generated query to the evidence evaluator.
+2. Promote only literal whole-phrase catalog evidence such as `high-quality selfies`; do not treat a generic selfie/front-camera mention as proof of sharp or flattering output.
+3. Add real-shaped Vivo V9, generic selfie-camera, unrelated camera-phone, and over-budget controls; verify deterministic price filtering still occurs before semantic evaluation.
+4. Rerun deterministic and browser gates, then hand Q02 to independent live QA. Do not use the implementation run to self-certify model stability.
+
+## Semantic action resolution implementation sequence (approved)
+
+1. Strengthen the separate live harness first: preserve Q01–Q15, assert unique grounded IDs, hard-filter precedence, exact evidence quotes, tier/score ordering, strict-only behavior, fallback disclosure and explicit price-first ordering. Preserve ordinary Vitest/Playwright discovery.
+2. Add a provider-facing ordered action schema while retaining the existing single provider call. Use opaque application-resolved displayed-product references and trusted existing-intent IDs.
+3. Validate the complete action plan before product search. Invalid/stale references, ambiguous budget ownership and comparative price requests without a trusted baseline clarify or fail closed without catalog retrieval.
+4. Execute actions through a staged reducer. Persist active results, bounded durable paused outcomes, focus and decision/tool evidence in the existing atomic completion transaction. Old state remains readable without a destructive migration.
+5. Add English/Hebrew paraphrase, negative, idempotency and process/repository recreation tests. Run the same named live scenarios before and after; reuse trustworthy saved evidence where acceptance criteria have not changed, and mark changed-criterion judge evidence inconclusive rather than spending calls implicitly.
+6. Obtain independent verification and review before a local commit. No push, merge or deployment is part of this plan.
+
+Stop and request approval if implementation requires another LLM call, a destructive data rewrite, a new dependency, or a production raw-prompt logging policy.
+
+### Additive-topic follow-up and correlated diagnostics
+
+1. Reproduce phone → “Also show me perfumes under $100” → “Show me cheaper options” with a deterministic three-turn regression.
+2. Prevent an unmatched explicit new category from being rebound to the sole prior intent; preserve prior outcomes only when the prompt explicitly marks the new topic as additive.
+3. Clarify the target for a category-free comparative follow-up when both preserved topics remain active; after the category is known, require an explicit maximum price unless a displayed product supplies a trustworthy comparison baseline.
+4. Add opt-in structured server diagnostics for request, plan, target decision, search constraints, results and errors, correlated without exposing credentials or full provider/catalog envelopes.
+5. Verify summary versus bounded development-only verbose logging, run full checks, and leave all existing conversations untouched.
+
+### Experiment exit criteria
+
+- Offline tests prove schema validation, exact-quote validation, provider-failure fallback, multi-intent isolation, tier ordering, strict-only filtering, and visible labels.
+- The evaluator observes only bounded post-filter candidates and cannot restore a product removed by deterministic constraints.
+- Any local LiteLLM/Ollama smoke run reports availability and behavior without changing credentials or persistent configuration.
+- A local commit records the experiment; no remote branch, merge, or deployment occurs.
+
+## Versioned conversation-memory remediation
+
+1. Add an additive SQLite migration for versioned conversation state and bounded decision events; do not rewrite existing rows.
+2. Centralize context projection so runtime context comes from server persistence rather than the client-supplied `previous` payload.
+3. Persist explicit add/replace/refine/clarify/select-product transitions and an unambiguous focus in the same completion transaction.
+4. Resolve displayed ordinals from stored result order; bypass the LLM for selection-only turns, validate and enforce the referenced intent/category for compound turns, treat comparative `cheaper` as a strict saved-price boundary, request `maxPrice` when that boundary is absent, and leave generic `cheap` as sorting only.
+5. Make explicit price ordering authoritative through semantic reranking without inventing a new budget.
+6. Persist catalog tool input summaries and returned product IDs, with no raw provider or secret-bearing payloads.
+7. Verify migration compatibility, restart recovery, idempotent retry, additive multi-intent behavior, ordinal selection, price order, static checks, build and browser regression gates.
+
+**Rollback boundary:** v5 rejects an applied migration marker it does not know, so code rollback is not automatic. Stop all application writers, back up the SQLite file, and transactionally delete only `schema_migrations.version = 6`; retain both additive tables and every row. The v5 application then starts while ignoring the retained tables. Migration 6 uses `IF NOT EXISTS`, so roll-forward records the marker again without replacing state or decision data. This procedure is covered by a rollback/roll-forward repository test.
+# Submission recovery addendum — 2026-11-01
+
+1. Preserve the dirty main checkout and rebuild on a stable isolated branch.
+2. Restore durable display groups, selected references, strict harness grounding, and failed manual regressions.
+3. Run deterministic unit/integration, harness, build, and Playwright gates.
+4. Run the original 23 live turns plus bounded flight/weather/mixed creative cases with real OpenAI and DummyJSON.
+5. Store raw artifacts and a human-readable consolidated report under project-local `var/evaluations/live-ai/`.

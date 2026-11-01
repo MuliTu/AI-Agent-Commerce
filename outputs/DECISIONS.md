@@ -19,7 +19,7 @@ This log records current decisions and proposals. “Accepted” means accepted 
 | D-11 | Conversation-owned result groups and independent scroll regions | Accepted design |
 | D-12 | Central, one-file-per-system-prompt organization | Accepted design |
 | D-13 | Fail-closed open-vocabulary catalog evidence | Accepted and implemented |
-| D-14 | Model-assisted semantic evidence judge in shadow mode | Proposed experiment |
+| D-14 | Model-assisted evidence-tier reranker on the local experiment branch | Active experiment |
 
 ## D-01 — Use Next.js with TypeScript
 
@@ -163,22 +163,87 @@ This log records current decisions and proposals. “Accepted” means accepted 
 
 **Trade-offs:** Unknown synonyms can produce false negatives. Generic evidence extraction is intentionally lexical and conservative. Curated features retain broader reviewed synonyms.
 
-## D-14 — Experiment with a semantic evidence judge without replacing the baseline
+## D-14 — Use evidence tiers for visible semantic reranking on the local experiment branch
 
 **Context:** Conservative lexical evidence may miss valid paraphrases. The repository already supports hosted OpenAI and a local LiteLLM-compatible Qwen/Ollama route.
 
-**Proposed decision:** On a separate local branch, evaluate a model-assisted evidence stage after deterministic hard filtering. The structured output must distinguish `supported`, `contradicted`, and `unknown`, include confidence, product ID, and exact trusted catalog evidence. Initially run it in shadow mode so baseline user-visible results do not change.
+**Experimental decision:** On the local-only `local/semantic-evidence-shadow` branch, let the configured assignment OpenAI provider reorder post-filter candidates into truthful evidence tiers: `supported`, `partial`, `unknown`, and internal `contradicted`. Each assessment includes confidence, a separate relevance score, product ID, requirement, and exact trusted catalog evidence. Supported products appear first, partial/related products next with a visible qualification, unknown products last, and contradicted products are excluded. An explicit “only verified” request keeps only supported products.
 
-**Why:** Shadow mode provides disagreement data and latency/reliability evidence without weakening the verified product boundary before submission.
+**Why:** Customers benefit when colloquial wording and catalog paraphrases influence ordering, but relevance must not be presented as proof. Tier-first ordering makes “satellite voice calling” stronger than related “satellite SOS messaging” while still allowing the related option to appear honestly for a normal relevance request.
 
 **Alternatives considered:**
 
 1. Replace deterministic ranking and filters with a model reranker. Rejected: price, stock, category, rating, and positive-brand rules must remain deterministic.
 2. Use embeddings alone. Rejected for hard proof because similarity cannot establish factual equivalence, though embeddings remain viable for soft ordering later.
 3. Call a model once per product. Rejected because it multiplies latency, cost, and failure surface; a bounded batch per intent is preferable.
-4. Enable the judge immediately in production results. Rejected until labelled evaluation demonstrates precision and exact-evidence validation.
+4. Treat every semantically related product as satisfying the feature. Rejected because related evidence is not verification and would mislead the shopper.
+5. Hide every non-supported product. Rejected for normal relevance requests because it discards useful alternatives; retained when the shopper explicitly asks for only verified matches.
 
-**Risks and gates:** Exact evidence spans must be verified against trusted fields; confidence is not proof; provider failure falls back to the lexical baseline; unknown fails closed for hard requirements. Local LiteLLM reduces external cost but may have weaker schema reliability and hardware-dependent latency. Hosted OpenAI may be more reliable but adds network latency and usage cost.
+**Score policy:** Evidence tier is the primary order and cannot be overridden by a score. The model relevance score orders products only within the same tier; ties preserve the deterministic pre-rerank order—lexical relevance normally, or price ascending when requested. Confidence describes the model assessment, not product truth. Every non-unknown claim requires a validated catalog quote.
+
+**Risks and gates:** Exact evidence spans must be verified against trusted fields; similarity, relevance score and confidence are not proof; provider timeout or invalid output falls back to the existing lexical/evidence behavior; explicit only-verified requests fail closed. Hosted OpenAI adds latency and usage cost, so the batch is bounded and evaluated once per intent.
+
+**Decision after the first live A/B run:** A semantic label is allowed only for evaluated products. We rejected appending candidates beyond the evaluator cap as `unknown: 0`, because “not evaluated” is not the same as “catalog evidence is unknown.” The experiment now evaluates the bounded displayed set and omits overflow. We also expose a user-safe fallback state rather than silently showing lexical order under a semantic-ordering claim.
+
+**Evidence-consistency rule:** The model may identify related meaning, but deterministic code resolves direct literal support. A validated quote can promote `partial` to `supported` only when it contains every meaningful requested feature term after category/stop-word removal. This accepts Huawei’s literal `slim` evidence while preventing `satellite SOS` from proving `satellite calling`.
+
+**Alternative considered:** Trust the model’s tier exactly. Rejected after the live run labeled Huawei’s literal slim description as partial and strict mode removed the correct product. The deterministic promotion is intentionally narrow and quote-bound, not a general semantic override.
+
+**Second-retest refinement:** Q08 showed that the narrow promotion was not reached with the right requirement: the planner query carried category, budget and “no guessing” language. Strict adjective-before-category wording is now extracted deterministically (`documented slim laptops` → `slim`). Q10 showed that exact evidence can be distributed across fields, so direct support may combine validated title/description/tag spans rather than requiring every term in one field.
+
+**Negative preference decision:** Scope deterministic negative preference handling to the reviewed “not a daytime freshie/fresh fragrance” wording, and exclude a product only when both normalized unwanted terms are directly present in trusted catalog text (`everyday` + `fresh`). This fixes CK One without pretending the application supports arbitrary `not a/an …` filters. The broader alternatives—parsing every free-form negation or inferring antonyms—were rejected as too speculative.
+
+**Token-boundary decision:** Literal promotion and negative matching use normalized whole-token/phrase boundaries, not raw substring inclusion. Otherwise a term such as `red` could be falsely “proven” by a title such as `Predator Black`. Cross-field evidence remains allowed only when every complete requested token is present in trusted fields.
+
+**Q02 selfie-quality decision:** Add one bounded bilingual extraction rule for explicit selfie-quality wording and map it to literal `high-quality selfie/selfies` catalog evidence. This lets deterministic validation repair an inconsistent model verdict for Vivo V9 without naming or special-casing that product. Alternatives considered were trusting the evaluator (rejected because the same catalog sentence was labeled inconsistently), treating every selfie-camera mention as supported (rejected because camera presence does not prove image quality), and adding broad inferred synonyms such as `beautiful` or `sharp` (rejected because the catalog does not establish those claims).
+
+**Additive-topic identity decision:** An explicit category that matches no previous intent is a new topic, even when the prompt also contains a budget. If it is introduced with an additive marker such as “also,” preserve prior successful outcomes as active siblings. Reusing the sole prior intent ID was rejected because it silently changed a phone intent into perfume and erased the very ambiguity a later “cheaper” follow-up needed to expose.
+
+**Development diagnostics decision:** Add structured, opt-in server diagnostics with a hashed per-turn correlation key. Summary mode records only bounded structural metadata; development-only verbose mode may include a truncated shopper prompt and trusted catalog product titles. Both modes exclude credentials, raw provider envelopes, catalog descriptions and database payloads. Always-on raw logging was rejected for privacy; error-only logging was rejected because it cannot explain successful-but-wrong routing decisions.
+
+**Why this branch is separate:** The committed baseline already has independently verified fail-closed behavior. The visible reranker needs labelled live QA before it can be considered for the submission or production path.
+
+## D-15 — Persist a versioned projection instead of replaying the transcript
+
+**Decision:** Store a compact `conversation_state` projection and advance its revision atomically with each completed turn. Build model context from the current prompt and active intents, while retaining displayed result order for deterministic references.
+
+**Why:** Full transcript replay increases tokens and leaves business state implicit. Deriving everything from the latest UI message loses focus, active siblings and displayed-product identity. A projection makes these contracts explicit without replacing the append-only turn history.
+
+**Alternatives considered:**
+
+1. Send all messages to the LLM. Rejected because cost grows with conversation length and product references remain probabilistic.
+2. Make `product_snapshots` alone the state source. Rejected because snapshots do not encode intent lifecycle, focus or transition semantics.
+3. Destructively backfill or rewrite old turns. Rejected because existing conversations must remain untouched.
+
+**Migration and concurrency:** Migration 6 only adds tables. Old conversations lazily create revision 1 after their next completed turn. Turns are serialized per conversation before reading state, so two accepted turns cannot both plan from the same revision. Different conversations remain independent.
+
+**Rollback procedure:** A pre-v6 binary rejects migration marker 6. Stop writers and back up the database, then delete only the version-6 marker inside `BEGIN IMMEDIATE`/`COMMIT`; do not drop or clear the new tables. The v5 binary ignores the retained additive tables. Because migration 6 uses `IF NOT EXISTS`, rolling forward preserves their rows and restores the marker. Automatic code-only rollback without this marker step is unsupported.
+
+## D-16 — Resolve deterministic product references before model planning
+
+**Decision:** Resolve “first/second/third one” against persisted displayed order when exactly one result group is in scope. A selection-only turn is completed deterministically as `select_product`. For a compound turn, pass only the resolved product's ID, title, price, category, position and prior intent ID to the bounded planner context, then validate that reference against persisted results and enforce the target intent/category in application code. Explicit cheaper and USD-budget clauses are applied deterministically; a separately named product category is searched while the exact selected product is preserved.
+
+**Why:** Product IDs and order are application facts. Asking the model to reconstruct them from prose is unnecessary and unsafe.
+
+**Alternative:** Give the full catalog result set to the planning model. Rejected because it increases tokens and permits hallucinated or reordered IDs. The compound-turn exception is one application-resolved product record, not a result replay. Ambiguous multi-group references remain unresolved rather than guessed.
+
+## D-17 — Price intent outranks semantic relevance
+
+**Decision:** `cheap` and `cheapest` request deterministic price-ascending ordering, including after semantic evaluation. Comparative `cheaper` requires either a deterministically selected product or an explicit maximum price; otherwise the application asks for the missing price threshold rather than presenting a re-sorted list as a comparison.
+
+**Why:** Relevance-tier ordering could make a more expensive item appear first and make a valid cheaper request look unchanged. Inventing a maximum price imposes a preference the shopper did not state.
+
+**Selected-product comparison:** When “cheaper” explicitly refers to a deterministically resolved displayed product, its persisted price is an observed comparison baseline rather than an invented budget. Results must be strictly below that price and exclude the selected product; an existing or explicit tighter maximum still applies. Without that selected baseline, `cheaper` produces a `maxPrice` clarification. Generic “cheap” remains price ordering only.
+
+**Alternative:** Exclude all previously displayed products or derive a budget from their median. Rejected because both rules are surprising and can hide the only valid products.
+
+## D-18 — Persist bounded decision and tool references
+
+**Decision:** Persist context/state-transition events and catalog tool summaries with product ID references. Do not persist raw provider envelopes, credentials or catalog descriptions.
+
+**Why:** Opt-in console logs alone cannot reconstruct a request after the process exits. Bounded records provide auditability without turning diagnostics into a sensitive transcript store.
+
+**Limitation:** These records cover application catalog operations and state transitions, not every internal provider SDK event.
 
 ## Decisions still requiring evidence or confirmation
 
@@ -187,3 +252,32 @@ This log records current decisions and proposals. “Accepted” means accepted 
 - Whether GPT-5.4-mini credentials/access are supplied
 - The semantic representation and final ranking weights
 - Whether authentication, cart, checkout, or transactional actions are required
+
+## D-19 — Use one ordered semantic action plan
+
+**Decision:** Replace competing intent-only and phrase-gate decisions with one ordered action plan from the existing provider call. Search, refine, pause, resume, select/describe and clarify are distinct operations. Existing-intent and displayed-product references are validated application facts; product references are opaque and independent of intent records.
+
+**Why:** Topic deactivation, ordinal description and comparative price meaning are actions, not catalog constraints. Encoding them explicitly prevents a lexical pre-check or later repair step from silently changing the action. A second model call was rejected because it adds latency, cost and another disagreement boundary.
+
+**Execution:** Validate the whole plan before product retrieval, execute it in order through a staged reducer, and persist the terminal projection atomically. Invalid references and ambiguous scopes fail closed. Durable paused outcomes are retained separately from active outcomes and may be resumed later. Old projection JSON remains backward compatible through an optional bounded field.
+
+## D-20 — Separate price ordering from price comparison
+
+**Decision:** Ascending price sort and comparative affordability are different structured semantics. Explicit price sort outranks semantic tier/score, with stable semantic/baseline tie-breaking only among equal prices. Comparative affordability requires a trusted displayed-product price or explicit maximum; without one the assistant clarifies before catalog search.
+
+**Rejected alternatives:** Treating every affordability phrase as `price_asc` fails the shopper's comparison; inventing a median or threshold is unsupported; letting semantic tier precede an explicit price sort contradicts the requested order.
+
+## D-21 — Bound evaluation evidence by environment
+
+**Decision:** Production diagnostics persist bounded action transitions, validation reason codes, actual catalog request arguments/attempts/status, response digests and returned product IDs/prices. They exclude credentials, raw provider envelopes, catalog descriptions and unnecessary prompt text. Explicit local live evaluation may retain raw prompts/catalog payloads in ignored project-local artifacts for reproducibility.
+
+**Retention:** Local evaluation artifacts are user-controlled project evidence, not application data. Runs never overwrite an existing directory, and no cleanup, commit or transmission is automatic. Reassessment retains the original artifact and writes a new versioned directory; a changed criterion invalidates the old judge verdict without altering raw evidence.
+
+**Judge independence:** The live harness accepts an explicit judge provider/model configuration while defaulting to the already configured application provider/model. Artifacts truthfully record execution independence, provider independence and model independence separately. A different model on the same provider is model-independent but not provider-independent; the default is neither. Deterministic failures remain authoritative in every configuration.
+
+**Limits:** A distinct judge may improve calibration but adds another paid call, latency and model-specific variance per turn. It does not make a subjective verdict objective. No distinct credential or provider is provisioned by the harness; operators must explicitly supply an already authorized configuration, and absence/unavailability remains `INCONCLUSIVE`.
+# Recovery decision — 2026-11-01
+
+The missing temporary worktree could not be recovered byte-for-byte from Git objects, IDE history, snapshots, task artifacts, or sourcemaps. Submission-critical behavior was reconstructed from commit `ea607c2`, durable evaluation artifacts, retained review evidence, and new regression tests in a stable project-local worktree. Reports must call this a reconstruction, not an exact recovery.
+
+Trusted category grounding takes precedence when words such as “weather” describe a catalog product use case (for example, a fragrance for cold weather). A request remains off-catalog only when no trusted product category is resolved for that intent. This avoids phrase-specific fixes while preserving flight/weather-only failures.

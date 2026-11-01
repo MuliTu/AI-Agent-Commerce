@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { ExtractedIntent } from '../../src/lib/orchestration/contracts';
 import {
+  coalesceAlternativeProductDrafts,
   decideFollowUpTargets,
   explicitPromptCategories,
   inspectPlanCategoryCoverage,
+  isAdditiveNamedRequest,
   isExclusiveNamedFollowUp,
   type CategoryResolver,
 } from '../../src/lib/orchestration/plan-integrity';
@@ -77,6 +79,23 @@ describe('plan category integrity', () => {
       resolveCategory,
     )).toMatchObject({ requiresRepair: false });
   });
+
+  it('coalesces a provider-invented backup intent into one explicitly grounded product goal', () => {
+    const localCategories = [...categories, 'mens-shoes'];
+    const localResolver: CategoryResolver = (requested, context, available) => {
+      if (requested && available.includes(requested)) return requested;
+      if (/basketball shoes|shooting hoops/iu.test(context)) return 'mens-shoes';
+      return undefined;
+    };
+    const prompt = 'Shoes for shooting hoops, though everyday sporty ones can be backups.';
+    const result = coalesceAlternativeProductDrafts(prompt, [
+      draft('basketball shoes', 'mens-shoes'),
+      draft('everyday sporty backups'),
+    ], localCategories, localResolver);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ query: prompt, constraints: { category: 'mens-shoes' } });
+  });
 });
 
 describe('follow-up target integrity', () => {
@@ -131,5 +150,16 @@ describe('follow-up target integrity', () => {
 
   it('does not make an ordinary named refinement exclusive', () => {
     expect(isExclusiveNamedFollowUp('Make the fragrance under $70', categories, resolveCategory)).toBe(false);
+  });
+
+  it('treats an additive unmatched category as a new sibling topic', () => {
+    expect(decideFollowUpTargets({
+      prompt: 'Also show me perfumes under $100.',
+      previousIntents: previousIntents.slice(0, 1),
+      availableCategories: categories,
+      resolveCategory,
+    })).toEqual({ kind: 'not_refinement' });
+    expect(isAdditiveNamedRequest('Also show me perfumes under $100.', categories, resolveCategory)).toBe(true);
+    expect(isAdditiveNamedRequest('Show me perfumes under $100.', categories, resolveCategory)).toBe(false);
   });
 });

@@ -81,6 +81,29 @@ export function inspectPlanCategoryCoverage(
   };
 }
 
+export function coalesceAlternativeProductDrafts(
+  prompt: string,
+  drafts: readonly ExtractedIntent[],
+  availableCategories: readonly string[],
+  resolveCategory: CategoryResolver,
+): ExtractedIntent[] {
+  if (drafts.length < 2 || !/\b(?:backup|backups|alternative|alternatives)\b/iu.test(prompt)) return [...drafts];
+  const explicitCategories = explicitPromptCategories(prompt, availableCategories, resolveCategory);
+  if (explicitCategories.length !== 1) return [...drafts];
+  const [category] = explicitCategories;
+  const matching = drafts.filter((draft) => resolveCategory(
+    draft.constraints.category,
+    `${draft.goal ?? ''} ${draft.query ?? ''}`,
+    availableCategories,
+  ) === category);
+  if (matching.length !== 1) return [...drafts];
+  return [{
+    ...matching[0],
+    query: prompt,
+    constraints: { ...matching[0].constraints, category },
+  }];
+}
+
 export type PriorIntentReference = Pick<ShoppingIntent, 'id'> & {
   constraints: Pick<ShoppingIntent['constraints'], 'category'>;
 };
@@ -109,6 +132,16 @@ export function isExclusiveNamedFollowUp(
     && explicitPromptCategories(prompt, availableCategories, resolveCategory).length === 1;
 }
 
+export function isAdditiveNamedRequest(
+  prompt: string,
+  availableCategories: readonly string[],
+  resolveCategory: CategoryResolver,
+): boolean {
+  const hasAdditiveMarker = /(?:\b(?:also|additionally|as well|too)\b|(?:^|\s)(?:גם|בנוסף)(?:\s|$))/iu.test(prompt);
+  return hasAdditiveMarker
+    && explicitPromptCategories(prompt, availableCategories, resolveCategory).length > 0;
+}
+
 export function decideFollowUpTargets(input: {
   prompt: string;
   previousIntents: readonly PriorIntentReference[];
@@ -125,6 +158,7 @@ export function decideFollowUpTargets(input: {
     const category = explicitCategories[0];
     const matches = previousIntents.filter((intent) => intent.constraints.category === category);
     if (matches.length === 1) return { kind: 'single', intentId: matches[0].id, category };
+    return { kind: 'not_refinement' };
   }
   if (previousIntents.length === 1) {
     const [intent] = previousIntents;

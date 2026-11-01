@@ -49,6 +49,18 @@ describe('catalog feature evidence', () => {
     expect(filterProductsByFeatureEvidence([eveningFragrance], evening)).toEqual([eveningFragrance]);
   });
 
+  it('extracts bounded selfie-quality evidence without treating a generic selfie camera as proof', () => {
+    const requirements = requestedFeatureEvidence(
+      'אני רוצה טלפון לסלפי חד ומחמיא, עד 400 דולר — לא סתם טלפון עם מצלמה.',
+    );
+    expect(requirements).toContainEqual({
+      label: 'high-quality selfies',
+      alternatives: ['high quality selfie', 'high quality selfies'],
+    });
+    expect(requestedFeatureEvidence('Show me a phone with a selfie camera.').map(({ label }) => label))
+      .not.toContain('high-quality selfies');
+  });
+
   it.each([
     ['בושם לערב', 'בושם לערב'],
     ['בושם', 'fragrance'],
@@ -82,6 +94,20 @@ describe('catalog feature evidence', () => {
     );
     expect(filterProductsByFeatureEvidence([genericPhone, satellitePhone], requirements))
       .toEqual([satellitePhone]);
+  });
+
+  it('extracts natural strict confirmation wording', () => {
+    const requirements = requestedFeatureEvidence(
+      'Only show phones whose catalog listing confirms a high-resolution display.',
+    );
+    expect(requirements).toHaveLength(1);
+    expect(requirements[0].label).toContain('high resolution display');
+  });
+
+  it('extracts the adjective from strict documented category wording', () => {
+    expect(requestedFeatureEvidence(
+      'Only documented slim laptops under $1,500, please — no guessing from the photo.',
+    )).toContainEqual({ label: 'slim', alternatives: ['slim'] });
   });
 
   it('scopes a separate explicit proof clause back to the matching multi-intent segment', () => {

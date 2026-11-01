@@ -87,6 +87,26 @@ describe('DummyJsonCatalogClient', () => {
     ]);
   });
 
+  it('records the retry attempt supplied by the orchestration boundary', async () => {
+    let attempt = 1;
+    const events: Array<{ attempt: number; products: Array<{ id: number; price: number }> }> = [];
+    const client = new DummyJsonCatalogClient({
+      baseUrl: 'https://catalog.test',
+      fetch: async () => jsonResponse(page),
+      boundaryAttempt: () => attempt,
+      observeBoundary: (event) => events.push({ attempt: event.attempt, products: event.products }),
+    });
+
+    await client.listProducts();
+    attempt = 2;
+    await client.listProducts();
+
+    expect(events).toEqual([
+      { attempt: 1, products: [{ id: 1, price: 9.99 }] },
+      { attempt: 2, products: [{ id: 1, price: 9.99 }] },
+    ]);
+  });
+
   it('rejects invalid request parameters before calling the transport', async () => {
     const fetchImplementation = vi.fn<CatalogFetch>();
     const client = clientWith(fetchImplementation);

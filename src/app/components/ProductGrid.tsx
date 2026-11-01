@@ -1,8 +1,9 @@
 import type { Product } from '@/lib/domain/contracts';
+import type { SemanticProductRelevance } from '@/lib/orchestration';
 import { ProductCard } from './ProductCard';
-type Props = { products: Product[]; getMatchReasons: (product: Product) => string[]; locale?: 'en' | 'he' };
-export function ProductGrid({ products, getMatchReasons, locale = 'en' }: Props) {
-  return <div className="product-grid" role="list" aria-label={locale === 'he' ? 'המלצות למוצרים' : 'Product recommendations'}>{products.map((product) => <div key={product.id} role="listitem"><ProductCard product={product} matchReasons={getMatchReasons(product)} locale={locale} /></div>)}</div>;
+type Props = { products: Product[]; getMatchReasons: (product: Product) => string[]; getSemanticRelevance?: (product: Product) => SemanticProductRelevance | undefined; locale?: 'en' | 'he' };
+export function ProductGrid({ products, getMatchReasons, getSemanticRelevance, locale = 'en' }: Props) {
+  return <div className="product-grid" role="list" aria-label={locale === 'he' ? 'המלצות למוצרים' : 'Product recommendations'}>{products.map((product) => <div key={product.id} role="listitem"><ProductCard product={product} matchReasons={getMatchReasons(product)} semanticRelevance={getSemanticRelevance?.(product)} locale={locale} /></div>)}</div>;
 }
 
 export function ProductGridSkeleton() {

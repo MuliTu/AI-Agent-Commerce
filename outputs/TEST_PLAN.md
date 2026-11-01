@@ -215,3 +215,24 @@ Before submission:
 - Empty lifecycle: fresh load shows centered welcome and composer; first accepted send removes it and moves the composer to sticky bottom; restored conversation never flashes or duplicates it.
 - Layout: representative products from every available category share desktop and 390×844 column policy, stable image frames, stretch/content flow, bottom-aligned match block, no clipping, and no horizontal overflow.
 - Accessibility: visible focus, keyboard send/newline behavior, native clarification controls, screen-reader names, RTL/LTR direction, broken-image fallback, and `prefers-reduced-motion`.
+
+## 12. Semantic action and evidence regression gate
+
+- Retain the original Q01–Q15 prompts as independently isolated live scenarios and compare the same names before/after.
+- Deterministically reject duplicate returned product IDs and conflicting raw catalog records for one ID; compare every returned field and price with actual boundary output.
+- Validate every semantic quote as a literal title/description/tag span. Require complete evidence when the scenario expects semantic evaluation.
+- Assert tier-first, score-within-tier and stable baseline ordering for ordinary relevance. When price sort is explicit, assert nondecreasing catalog price before semantic tie-breaks.
+- Assert strict-only output contains supported products only; a legitimate empty strict result remains valid. Provider timeout/invalid evidence must be visibly marked fallback, while scenarios that require semantic evidence fail rather than silently accepting fallback.
+- Recheck every returned product against hard category, maximum price, minimum rating, availability and positive-brand filters before considering semantic quality.
+- Exercise ordered pause/search, durable resume, ordinal show/describe, stale reference, invented reference, ambiguous target/budget and comparative price with/without a trusted baseline in English and Hebrew paraphrases.
+- Recreate repository and service instances between selected turns, verify paused/active/focus state from disk, and replay identical turn IDs to prove idempotency without duplicate actions or products.
+- Live-provider absence, catalog capture gaps or changed acceptance criteria produce `INCONCLUSIVE`; a judge never overrides a deterministic failure. Record call counts/usage when exposed and do not silently substitute mocks.
+- Exercise default same-model judging and configured alternate-model judging without recording credentials. Assert the artifact's provider/model-independence flags, and report additional judge cost, latency and calibration variance rather than treating independence as correctness.
+# Recovery regression matrix — 2026-11-01
+
+- Category-qualified ordinal after a topic switch: exact historical product, zero new search.
+- “That phone” after service recreation: exact persisted selection, zero new search.
+- Same ordinal across two lists: exact IDs; unavailable position clarifies.
+- Repeated selection, changed display order, duplicate categories, inactive history, corrupt state, unrelated anaphora, and ordinal false positives.
+- Harness prior-turn catalog evidence: full-field grounding or `INCONCLUSIVE` when capture is incomplete.
+- Real-provider suite: original 19 scenarios / 23 turns plus flight-only, weather-only, and mixed phone/flight cases.

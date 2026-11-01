@@ -147,7 +147,7 @@ test('single intent returns catalog-grounded products', async ({ page }) => {
   await runExample(page, 'Single intent');
   await expect(page.getByRole('heading', { name: 'Find a catalog product' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Apple MacBook Pro 14 Inch Space Grey' })).toBeVisible();
-  await expect(page.getByText(/I found \d+ catalog-backed options?, ordered by match\./)).toBeVisible();
+  await expect(page.getByText(/I found \d+ catalog-backed options?, ordered by (?:match|relevance and evidence tier)\./)).toBeVisible();
 });
 
 test('a broken catalog image is replaced by an accessible fallback', async ({ page }) => {
@@ -315,6 +315,31 @@ test('multi-intent request keeps each goal separate', async ({ page }) => {
   await expect(page.getByLabel('Shopping goals').locator('.intent')).toHaveCount(2);
 });
 
+test('an additive perfume turn displays both groups and a later cheaper request asks which group', async ({ page }) => {
+  const prompt = page.getByLabel('What are you shopping for?');
+  await prompt.fill('Find a smartphone');
+  await page.getByRole('button', { name: 'Find products' }).click();
+  await expect(page.locator('.conversation-turn').last().getByRole('heading', { name: 'iPhone 15 Pro' })).toBeVisible();
+
+  await prompt.fill('Also show me perfumes under $100.');
+  await page.getByRole('button', { name: 'Refine results' }).click();
+
+  const additiveTurn = page.locator('.conversation-turn').last();
+  const groups = additiveTurn.getByLabel('Shopping goals').locator('.intent');
+  await expect(groups).toHaveCount(2);
+  await expect(groups.nth(0)).toContainText('Find a catalog phone');
+  await expect(groups.nth(0).getByRole('heading', { name: 'iPhone 15 Pro' })).toBeVisible();
+  await expect(groups.nth(1)).toContainText('Find an everyday fragrance under $100');
+  await expect(groups.nth(1).getByRole('heading', { name: 'Calvin Klein CK One' })).toBeVisible();
+
+  await prompt.fill('Show me cheaper options');
+  await page.getByRole('button', { name: 'Refine results' }).click();
+  const cheaperTurn = page.locator('.conversation-turn').last();
+  await expect(cheaperTurn.getByRole('heading', { name: 'Which product category should I focus on?' })).toBeVisible();
+  await expect(cheaperTurn.getByLabel('Smartphones')).toBeVisible();
+  await expect(cheaperTurn.getByLabel('Fragrances')).toBeVisible();
+});
+
 test('three-intent request keeps independent constraints and results scoped to each goal', async ({ page }) => {
   await page.getByLabel('What are you shopping for?').fill('Three intents: a work laptop under $1500, basketball shoes under $200, and an everyday fragrance under $75');
   await page.getByRole('button', { name: 'Find products' }).click();
@@ -331,7 +356,7 @@ test('three-intent request keeps independent constraints and results scoped to e
 });
 
 test('one failure in a three-intent request does not erase the two successful siblings', async ({ page }) => {
-  await page.getByLabel('What are you shopping for?').fill('Three intents partial failure: a work laptop under $1500, basketball shoes under $200, and a fragrance under $75');
+  await page.getByLabel('What are you shopping for?').fill('Three intents partial failure: a work laptop under $1500, basketball shoes under $200, and an unavailable catalog search under $75');
   await page.getByRole('button', { name: 'Find products' }).click();
 
   const goals = page.getByLabel('Shopping goals').locator('.intent');

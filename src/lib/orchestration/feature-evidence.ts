@@ -12,6 +12,7 @@ const FEATURE_REQUIREMENTS: readonly FeatureEvidenceRequirement[] = [
   { label: 'eSIM support', alternatives: ['esim'] },
   { label: 'NFC support', alternatives: ['nfc'] },
   { label: 'camera capabilities', alternatives: ['camera', 'photography', 'photographic'] },
+  { label: 'high-quality selfies', alternatives: ['high quality selfie', 'high quality selfies'] },
   { label: 'evening use', alternatives: ['evening', 'night'] },
 ];
 
@@ -19,7 +20,7 @@ function normalize(value: string): string {
   return value.normalize('NFKD').toLocaleLowerCase('en-US').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
 
-const EXPLICIT_PROOF_LANGUAGE = /\b(?:verified|documented|catalog|description|details|listing|product\s+text)\b[^.?!]{0,100}\b(?:state|states|stated|mention|mentions|mentioned|list|lists|listed|show|shows|shown|describe|describes|described|say|says)\b/iu;
+const EXPLICIT_PROOF_LANGUAGE = /\b(?:verified|documented|confirmed|catalog|description|details|listing|product\s+text)\b[^.?!]{0,120}\b(?:confirm|confirms|confirmed|state|states|stated|mention|mentions|mentioned|list|lists|listed|show|shows|shown|describe|describes|described|say|says)\b/iu;
 
 function cleanFeaturePhrase(value: string): string | undefined {
   const cleaned = normalize(value)
@@ -36,7 +37,7 @@ function genericExplicitRequirements(prompt: string): FeatureEvidenceRequirement
   if (!EXPLICIT_PROOF_LANGUAGE.test(prompt)) return [];
   const candidates: string[] = [];
   const patterns = [
-    /(?:catalog|description|details|listing|product\s+text)[^.?!,;]{0,40}\b(?:does\s+not|doesn't|do\s+not|is\s+not|isn't)?\s*(?:state|mention|list|show|describe|say)s?\s+([^,.!?;]{2,80})/giu,
+    /(?:catalog|description|details|listing|product\s+text)[^.?!,;]{0,60}\b(?:does\s+not|doesn't|do\s+not|is\s+not|isn't)?\s*(?:confirm|state|mention|list|show|describe|say)s?\s+([^,.!?;]{2,80})/giu,
     /([^,.!?;]{2,70}?)\s+(?:is|are)\s+not\s+(?:stated|mentioned|listed|shown|described)\b/giu,
     /\b(?:with|having)\s+(?:verified|documented)\s+([^,.!?;]{2,70})/giu,
   ];
@@ -61,6 +62,15 @@ function genericExplicitRequirements(prompt: string): FeatureEvidenceRequirement
   }));
 }
 
+function strictAdjectiveRequirements(prompt: string): FeatureEvidenceRequirement[] {
+  const productNoun = String.raw`(?:phones?|smartphones?|laptops?|shoes?|fragrances?|perfumes?|products?)`;
+  const pattern = new RegExp(String.raw`\b(?:only\s+)?(?:verified|documented|confirmed)\s+([^,.!?;]{2,50}?)\s+${productNoun}\b`, 'giu');
+  return [...prompt.matchAll(pattern)].flatMap((match) => {
+    const phrase = cleanFeaturePhrase(match[1] ?? '');
+    return phrase ? [{ label: phrase, alternatives: [phrase] }] : [];
+  });
+}
+
 /**
  * Returns only requirements the shopper clearly asks the catalog to establish.
  * The vocabulary is deliberately bounded: an unknown adjective remains ranking
@@ -72,11 +82,15 @@ export function requestedFeatureEvidence(prompt: string): FeatureEvidenceRequire
   const curated = FEATURE_REQUIREMENTS.filter(({ label, alternatives }) => {
     const hebrewEveningMention = label === 'evening use'
       && /(?:בושם|ניחוח).{0,20}(?:לערב|ערב)|(?:לערב|ערב).{0,20}(?:בושם|ניחוח)/u.test(prompt);
-    const mentioned = hebrewEveningMention
+    const selfieQualityMention = label === 'high-quality selfies'
+      && (/(?:סלפי).{0,24}(?:חד|מחמיא)|(?:חד|מחמיא).{0,24}(?:סלפי)/u.test(prompt)
+        || /\b(?:high quality|sharp|flattering)\s+selfies?\b/u.test(normalized));
+    const mentioned = hebrewEveningMention || selfieQualityMention
       || alternatives.some((term) => normalized.includes(normalize(term)));
     if (!mentioned) return false;
     if (requiresEvidence) return true;
     if (label === 'camera capabilities') return /\b(?:camera focused|good camera|camera capabilities)\b/u.test(normalized);
+    if (label === 'high-quality selfies') return selfieQualityMention;
     if (label === 'evening use') {
       return /\bevening\s+(?:fragrance|perfume|scent)\b/u.test(normalized) || hebrewEveningMention;
     }
@@ -88,7 +102,9 @@ export function requestedFeatureEvidence(prompt: string): FeatureEvidenceRequire
       const normalizedCandidate = normalize(candidate);
       return curatedTerms.some((term) => term.includes(normalizedCandidate) || normalizedCandidate.includes(term));
     }));
-  return [...curated, ...generic];
+  const strict = strictAdjectiveRequirements(prompt);
+  const byLabel = new Map([...curated, ...strict, ...generic].map((requirement) => [requirement.label, requirement]));
+  return [...byLabel.values()];
 }
 
 export function requestedFeatureEvidenceForIntent(input: {

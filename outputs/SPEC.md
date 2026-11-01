@@ -226,6 +226,19 @@ Persist only what is necessary. Secrets, raw provider credentials, and unnecessa
 - Refreshing or reconnecting from another client can recover server-persisted conversation state.
 - The project-authored reliability target is five total transient attempts; the current live initial-execution gap is documented and remains deferred.
 - One intent can fail without discarding successful sibling intents.
+
+## 12. Approved semantic action resolution extension
+
+The planning boundary returns one ordered semantic action plan from the existing provider call. Actions distinguish new searches, refinements, durable pause/resume, displayed-product selection/description, and clarification. Targets use trusted prior-intent IDs; displayed products use opaque application-issued reference IDs. The provider never supplies trusted product identity or price facts.
+
+Price semantics are explicit and non-interchangeable:
+
+- `sort_low_to_high` orders the hard-filtered candidate set by catalog price. Price order has priority over semantic tier and relevance score; semantic signals may break equal-price ties only.
+- `cheaper_than_reference` requires a trusted displayed-product price or an explicit shopper maximum. Without either, the turn clarifies before a product search. Re-sorting the same set is not a comparative result.
+
+The application validates every action and reference before product retrieval, then executes operations in order and commits the resulting state atomically. Paused outcomes are durable, excluded from active targeting and rendering, and may be resumed later without transcript replay. Existing state without paused outcomes remains valid and is upgraded lazily on a later completed turn.
+
+Evaluation data has two scopes. Production persistence stores bounded structural action/tool evidence, correlation IDs, attempts, product IDs/prices and response digests; it excludes credentials, raw provider envelopes, catalog descriptions and unnecessary raw prompts. Explicit local live-evaluation runs may store full prompts and captured catalog payloads under an ignored project-local artifact directory. Those artifacts are retained until deliberately archived or removed by the user and must never be committed or transmitted implicitly.
 - The UI describes interrupted/stale work honestly; it does not claim survival across server shutdown.
 
 ## 12. Non-functional requirements
@@ -264,6 +277,7 @@ Persist only what is necessary. Secrets, raw provider credentials, and unnecessa
 - Bazak responds in the shopper's language for Hebrew and English turns while trusted catalog product fields remain in their source language and render LTR inside RTL conversation chrome.
 - Every new turn starts a new intent scope unless it explicitly carries a validated clarification or retry identity from the previous result. Unknown categories fail honestly instead of falling back to an unrelated catalog category.
 - Deterministic follow-up repair may attach a constraint-only turn to the sole relevant previous product intent when the provider omits its ID. When several previous product intents are plausible, clarification options are derived from those intents or trusted catalog evidence, never from a fixed unrelated category list.
+- An additive named-topic turn such as “Also show me perfumes under $100” starts a new perfume intent and preserves the prior phone intent; it must not reuse the phone intent ID merely because that was previously the only active topic. A later category-free “Show me cheaper options” therefore asks which active product intent to refine and then requests an explicit maximum price unless the shopper selected a displayed product as the comparison baseline. The system never represents a mere reorder as a comparative-price result.
 - Unsupported services such as flights render as concise conversational prose; supported sibling product intents remain independently actionable.
 - Weather and other non-catalog questions use the same friendly catalog-only boundary. A refusal is rendered once, and mixed product/off-topic turns retain the supported product result.
 - Filtered searches that return no products name the empty match condition accurately (for example, no laptops under $800) and invite a relevant constraint change.
@@ -275,6 +289,46 @@ Persist only what is necessary. Secrets, raw provider credentials, and unnecessa
 
 A price-picker component is discussion-only and is not part of this implementation slice. Budget refinements continue through natural-language input and existing clarification controls.
 
+## 15.2 Versioned conversation memory
+
+- Every terminal turn advances one server-owned `conversation_state` revision in the same SQLite transaction as messages, intents, tool references, product snapshots and `result_json`.
+- The projection contains at most eight active structured outcomes, an unambiguous current focus, the last operation (`add`, `replace`, `refine`, `clarify`, or `select_product`), the last turn ID and update time. When the bound is exceeded, the oldest active outcomes leave model context but remain in immutable turn history.
+- Existing conversations remain readable without backfill. Their latest completed `result_json` is the compatibility source until the next successful turn creates revision 1.
+- LLM context remains bounded to the current prompt and active structured intents; full transcript replay is not introduced.
+- Ordinal references are resolved against persisted displayed order when a single product group makes the reference deterministic. Selection-only requests bypass the model. For compound cheaper/USD-budget or separately named-product requests, the application validates the bounded product reference and deterministically enforces the prior intent/category after planning; additive product clauses preserve the exact selected product. Comparative “cheaper” with a selected product excludes that product and all equal-or-higher-priced results; without a selected product it requests an explicit maximum price. Generic “cheap” only sorts ascending. The application never asks the model to invent a product ID.
+- Explicit price ordering is authoritative over semantic relevance ordering. `Cheaper` does not invent an unstated price ceiling.
+- Bounded decision events and catalog tool references are persisted without credentials, provider envelopes or catalog descriptions.
+
 ## 16. Live-provider QA remediation
 
-The confirmed scenarios in `QA_LIVE_AI_REPORT_2026-10-30.md` are release regressions. Acceptance requires deterministic coverage for each invariant and a separate opt-in live-provider replay. Provider-plan observability is bounded to structural summaries and must not persist credentials, authorization data, raw provider responses or catalog payloads.
+The confirmed scenarios in `QA_LIVE_AI_REPORT_2026-10-30.md` are release regressions. Acceptance requires deterministic coverage for each invariant and a separate opt-in live-provider replay. Provider-plan observability is bounded to structural summaries and must not persist credentials, authorization data, raw provider responses or catalog payloads. Opt-in server diagnostics use one hashed correlation key per conversation/turn and structured stages for request receipt, interpreted plan, follow-up targeting, search constraints, result summaries and errors. Summary mode logs no raw shopper prompt or product titles. Verbose prompt/title content is bounded, development-only, disabled by default and documented explicitly.
+
+## 17. Local semantic-evidence relevance experiment
+
+This section applies only to `local/semantic-evidence-shadow`; it is not part of the pushed submission baseline.
+
+- Deterministic category, price, stock, rating and brand filtering remains authoritative and runs before semantic evaluation.
+- The evaluator accepts a bounded requirement and bounded post-filter catalog candidates, and returns per-product `supported`, `partial`, `contradicted`, or `unknown` verdicts with bounded confidence and a separate relevance score from 0 to 1.
+- Every claimed evidence quote must be an exact substring of trusted title, description or tags and identify its source field. Invalid evidence is never displayed: a structurally valid but inconsistent individual assessment is downgraded to `unknown`, while a malformed batch triggers the deterministic fallback.
+- Similarity, confidence, relevance score and model prose never establish proof by themselves and never restore a deterministically excluded product.
+- For normal relevance requests, results order by evidence tier first (`supported`, then `partial`, then `unknown`), model relevance score second, and deterministic lexical score as a tie-breaker. `contradicted` results are excluded.
+- The UI labels supported products as verified, partial products as related but not verified, and unknown products as unverified. It displays the bounded semantic score without implying that it is factual proof.
+- If the shopper explicitly requires only verified/documented matches, only `supported` products remain. Related or unknown products are not silently substituted.
+- Natural strict wording includes `only`, `verified`, `documented`, `confirmed/confirms`, and equivalent fail-closed phrasing. A strict request never returns broad unverified products on provider fallback.
+- Direct literal catalog evidence cannot be downgraded merely because the model chose `partial`: deterministic evidence consistency promotes a product to supported only when all meaningful requested feature terms are present in the validated quote. Shared topic words alone (for example `satellite` without `calling`) are insufficient.
+- Strict adjective-before-category wording such as “only documented slim laptops” extracts the adjective (`slim`) as the evidence requirement instead of reusing the planner's broader query. Direct support may combine exact trusted title, description and tag spans; every contributing span remains visible.
+- A narrow negative descriptive preference such as “not a daytime freshie” excludes a product only when all normalized unwanted terms are directly present across trusted catalog text. This is semantic evidence handling, not a new general brand or free-form exclusion filter.
+- A request explicitly emphasizing selfie quality (including the reviewed Hebrew `סלפי חד ומחמיא`) uses a bounded `high-quality selfies` evidence requirement. A literal catalog phrase such as `high-quality selfies` may establish support; a generic front/selfie camera mention remains partial or unknown and must not be promoted as proof of flattering or sharp results.
+- Every displayed semantically ranked product must have been evaluated. Candidate limits may reduce the displayed set, but unevaluated products are never mislabeled `unknown` with score zero.
+- Provider failure, timeout, or malformed output uses the deterministic lexical/evidence result as a clearly defined fallback. The intent result and UI state disclose that semantic ordering was unavailable and must not claim evidence-tier ordering.
+- Turn-level copy is derived from card-level tiers: if any displayed product is partial or unknown, the response says verified matches appear first and qualified alternatives follow; it never claims every product is verified.
+- Contextual negation such as “not just,” “without paying flagship money,” “not a daytime freshie,” Hebrew `לא סתם`, and `לא זוכרת` is not a brand exclusion. Natural catalog terms such as shoes, basketball shoes, scent, perfume, makeup, lashes, and mascara resolve to the appropriate trusted category when unambiguous.
+- The configured assignment OpenAI provider is used on this local experiment branch without copying or changing its credential. The same provider abstraction remains compatible with LiteLLM/Ollama.
+- Fifteen creative ambiguous or colloquial real-catalog prompts are prepared for separate live QA; implementation does not self-certify them.
+# Recovery acceptance addendum — 2026-11-01
+
+- Historical ordinals resolve exact persisted product IDs and order without a new catalog search.
+- Multi-group ordinals require unambiguous active display groups; missing positions clarify with schema-valid choices.
+- Selected-product follow-ups survive repository/service recreation and cannot be synthesized from stale state.
+- Product-category evidence overrides incidental off-catalog vocabulary inside the same grounded intent; true flight/weather intents remain scoped failures.
+- Live evaluation records exact candidate revision, provider/model, actual catalog boundary evidence, state transitions, deterministic assertions, judge result, usage when exposed, and durable artifact paths.

@@ -75,6 +75,35 @@ export type ProductSnapshotRecord = {
   createdAt: string;
 };
 
+export type IntentOperation = 'add' | 'replace' | 'refine' | 'clarify' | 'select_product';
+
+export type ConversationMemoryState = {
+  conversationId: string;
+  revision: number;
+  activeResult?: OrchestrationResult;
+  currentFocusIntentId?: string;
+  lastOperation: IntentOperation;
+  lastTurnId: string;
+  updatedAt: string;
+  pausedOutcomes?: OrchestrationResult['outcomes'];
+  selectedProducts?: Array<{
+    intentId: string;
+    position: number;
+    product: Product;
+    selectedAtTurnId: string;
+  }>;
+};
+
+export type DecisionEventRecord = {
+  id: string;
+  conversationId: string;
+  turnId: string;
+  sequence: number;
+  stage: string;
+  payload: unknown;
+  createdAt: string;
+};
+
 export type CompleteTurnInput = {
   turnId: string;
   status: Extract<TurnStatus, 'completed' | 'partial' | 'failed'>;
@@ -83,5 +112,7 @@ export type CompleteTurnInput = {
   intents: IntentRecord[];
   toolRuns: ToolRunRecord[];
   productSnapshots: ProductSnapshotRecord[];
+  conversationState?: ConversationMemoryState;
+  decisionEvents?: DecisionEventRecord[];
   result?: OrchestrationResult;
 };

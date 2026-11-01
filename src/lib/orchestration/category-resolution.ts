@@ -1,13 +1,14 @@
 const CATEGORY_ALIASES: Readonly<Record<string, readonly string[]>> = {
   'mobile-accessories': ['phone case', 'phone cases', 'phone charger', 'phone chargers', 'screen protector', 'screen protectors', 'mobile accessory', 'mobile accessories'],
   smartphones: ['iphone', 'iphones', 'phone', 'phones', 'smartphone', 'smartphones', 'mobile', 'mobiles', 'טלפון', 'טלפונים', 'סמארטפון', 'סמארטפונים'],
-  fragrances: ['perfume', 'perfumes', 'fragrance', 'fragrances', 'cologne', 'colognes', 'בושם', 'בשמים'],
+  fragrances: ['perfume', 'perfumes', 'fragrance', 'fragrances', 'cologne', 'colognes', 'scent', 'scents', 'בושם', 'בשמים', 'ניחוח', 'ניחוחות'],
   laptops: ['laptop', 'laptops', 'notebook', 'notebooks', 'לפטופ', 'לפטופים', 'מחשב נייד', 'מחשבים ניידים'],
   luggage: ['luggage', 'suitcase', 'suitcases', 'bag', 'bags', 'מזוודה', 'מזוודות', 'תיק נסיעות'],
   'kitchen-accessories': ['kitchen', 'kitchen accessory', 'kitchen accessories', 'plate', 'plates', 'dish', 'dishes', 'מטבח', 'למטבח', 'אביזרי מטבח', 'צלחת', 'צלחות', 'כלי אוכל'],
   tablets: ['tablet', 'tablets', 'ipad', 'ipads'],
-  'mens-shoes': ['mens shoe', "men's shoe", 'mens shoes', "men's shoes"],
+  'mens-shoes': ['mens shoe', "men's shoe", 'mens shoes', "men's shoes", 'basketball shoe', 'basketball shoes', 'shoes for shooting hoops'],
   'womens-shoes': ['womens shoe', "women's shoe", 'womens shoes', "women's shoes"],
+  beauty: ['makeup', 'cosmetics', 'mascara', 'lashes', 'lash makeup', 'איפור', 'קוסמטיקה', 'מסקרה', 'ריסים'],
 };
 
 function normalize(value: string): string {
@@ -79,7 +80,14 @@ export function isConstraintOnlyFollowUp(
   availableCategories: readonly string[],
 ): boolean {
   if (resolveCatalogCategory(undefined, prompt, availableCategories)) return false;
-  return /(?:\b(?:under|below|less than|at most|max(?:imum)?|budget|cheaper|cheap|cheapest|only in stock|in stock only)\b|\$\s*\d|\d\s*(?:USD|dollars?)\b|(?:עד|פחות מ|תקציב|זול(?:ה|ים|ות)?|רק במלאי))/iu.test(prompt);
+  return /(?:\b(?:under|below|less than|at most|max(?:imum)?|budget|cheaper|cheap|cheapest|affordable|lower[ -]priced|less expensive|only in stock|in stock only)\b|\$\s*\d|\d\s*(?:USD|dollars?)\b|(?:עד|פחות מ|תקציב|זול(?:ה|ים|ות)?|רק במלאי))/iu.test(prompt);
+}
+
+/** Distinguishes a relative price change from a non-comparative request to
+ * sort inexpensive products. The grammar intentionally recognizes broad
+ * comparative forms rather than any one evaluation sentence. */
+export function requestsComparativeAffordability(prompt: string): boolean {
+  return /(?:\b(?:cheaper|lower[ -]priced|less expensive|more affordable|more budget[ -]friendly|budget[ -]friendlier)\b|(?:יותר\s+זול|זול\s+יותר|פחות\s+יקר|יותר\s+משתלם))/iu.test(prompt);
 }
 
 export function explicitUsdMaxPrice(prompt: string): number | undefined {
