@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { AgentBoundaryError } from '../../src/lib/agent';
@@ -17,7 +18,8 @@ type RunSummary = {
   runId: string;
   startedAt: string;
   completedAt: string;
-  gitBase: '2435b86';
+  candidateRevision: string;
+  harnessCompatibilityBase: '2435b86';
   provider: string;
   model: string | null;
   databasePath: string;
@@ -112,6 +114,14 @@ function configuredArtifactDirectory(runId: string): string {
   return directory;
 }
 
+function currentGitRevision(): string {
+  try {
+    return execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  } catch {
+    return 'unknown';
+  }
+}
+
 export async function runLiveEvaluation(input: { scenarios?: EvaluationScenario[] } = {}): Promise<RunSummary> {
   const startedAt = new Date().toISOString();
   const runId = `${startedAt.replace(/[:.]/gu, '-')}-${process.pid}`;
@@ -123,7 +133,8 @@ export async function runLiveEvaluation(input: { scenarios?: EvaluationScenario[
     schemaVersion: 1 as const,
     runId,
     startedAt,
-    gitBase: '2435b86' as const,
+    candidateRevision: currentGitRevision(),
+    harnessCompatibilityBase: '2435b86' as const,
     provider: environment.LLM_PROVIDER,
     model: environment.LLM_PROVIDER === 'disabled' ? null : environment.LLM_MODEL,
     databasePath,
