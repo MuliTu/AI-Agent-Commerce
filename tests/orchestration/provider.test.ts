@@ -91,7 +91,7 @@ describe('provider-backed intent extraction', () => {
         };
       };
     };
-    expect(jsonSchema.required).toEqual(['intents', 'response']);
+    expect(jsonSchema.required).toEqual(['intents', 'operations', 'priceSemantics', 'response']);
     expect(jsonSchema.properties?.intents?.items?.required).toEqual([
       'intentId', 'goal', 'query', 'constraints', 'status',
     ]);
@@ -115,6 +115,11 @@ describe('provider-backed intent extraction', () => {
         },
         status: 'ready',
       }],
+      operations: [{
+        op: 'search', intentId: null, intentIndex: 0, referenceId: null,
+        presentation: null, reason: null, candidateIntentIds: [],
+      }],
+      priceSemantics: [{ kind: 'none', referenceId: null }],
       response: 'I will search for a laptop.',
     })).toEqual({
       intents: [{
@@ -123,6 +128,8 @@ describe('provider-backed intent extraction', () => {
         constraints: { maxPrice: 500, minRating: 4 },
         status: 'ready',
       }],
+      operations: [{ op: 'search', intentIndex: 0 }],
+      priceSemantics: [{ kind: 'none' }],
       response: 'I will search for a laptop.',
     });
   });

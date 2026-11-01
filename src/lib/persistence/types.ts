@@ -85,6 +85,7 @@ export type ConversationMemoryState = {
   lastOperation: IntentOperation;
   lastTurnId: string;
   updatedAt: string;
+  pausedOutcomes?: OrchestrationResult['outcomes'];
 };
 
 export type DecisionEventRecord = {

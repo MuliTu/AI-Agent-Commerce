@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { DummyJsonCatalogClient } from '../catalog';
 import { AgentBoundaryError } from '../agent';
 import { parseEnvironment } from '../config/environment';
@@ -15,6 +16,8 @@ export async function runLiveOrchestration(input: {
   conversationId: string;
   prompt: string;
   previous?: OrchestrationResult;
+  pausedOutcomes?: OrchestrationResult['outcomes'];
+  displayedProductReference?: import('./contracts').IntentExtractionContext['displayedProductReference'];
   clarification?: ClarificationAnswer;
   observeDecision?: (event: OrchestrationDecisionDiagnostic) => void;
 }): Promise<OrchestrationResult> {
@@ -30,19 +33,25 @@ export async function runLiveOrchestration(input: {
   }
   const extractIntents = createProviderIntentExtractor({ environment });
   const semanticEvidenceEvaluator = createProviderSemanticEvidenceEvaluator({ environment });
-  const catalog = new DummyJsonCatalogClient();
   const serverDiagnostics = createServerDiagnosticReporter({
     conversationId: input.conversationId,
     turnId: input.turnId,
+  });
+  const observeDecision = (event: OrchestrationDecisionDiagnostic) => {
+    serverDiagnostics.decision(event);
+    input.observeDecision?.(event);
+  };
+  const catalogAttempt = new AsyncLocalStorage<number>();
+  const catalog = new DummyJsonCatalogClient({
+    boundaryAttempt: () => catalogAttempt.getStore() ?? 1,
+    observeBoundary: (event) => observeDecision({ stage: 'catalog_boundary', ...event }),
   });
   return createIntentOrchestrator({
     catalog,
     extractIntents,
     semanticEvidenceEvaluator,
-    observeDecision: (event) => {
-      serverDiagnostics.decision(event);
-      input.observeDecision?.(event);
-    },
+    observeDecision,
+    runCatalogAttempt: (attempt, operation) => catalogAttempt.run(attempt, operation),
     observeSemanticEvidence: (report: SemanticEvidenceReport) => {
       if (process.env.NODE_ENV === 'test') return;
       const summary = report.status === 'completed'

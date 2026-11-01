@@ -5,6 +5,23 @@ export type ServerDiagnosticLevel = 'off' | 'summary' | 'verbose';
 
 export type OrchestrationDecisionDiagnostic =
   | {
+      stage: 'semantic_action_plan';
+      operations: Array<{ index: number; op: string; targetKind: 'intent' | 'reference' | 'draft' | 'none' }>;
+      priceSemantics: string[];
+    }
+  | {
+      stage: 'catalog_boundary';
+      operation: string;
+      attempt: number;
+      method: 'GET';
+      pathname: string;
+      query: Record<string, string>;
+      status: number | null;
+      durationMs: number;
+      products: Array<{ id: number; price: number }>;
+      errorCode?: string;
+    }
+  | {
       stage: 'intent_interpretation';
       intents: Array<{
         intentId: string;
@@ -61,6 +78,18 @@ function bounded(value: string, limit: number): string {
   return redact(value).slice(0, limit);
 }
 
+function diagnosticCatalogQuery(query: Record<string, string>, level: ServerDiagnosticLevel): Record<string, unknown> {
+  const safeExactKeys = new Set(['limit', 'skip', 'sortBy', 'order', 'select']);
+  return Object.fromEntries(Object.entries(query).map(([key, value]) => {
+    if (safeExactKeys.has(key)) return [key, value];
+    return [key, {
+      length: value.length,
+      hash: hash(value),
+      ...(level === 'verbose' ? { text: bounded(value, 200) } : {}),
+    }];
+  }));
+}
+
 export function serverDiagnosticLevel(environment: DiagnosticEnvironment): ServerDiagnosticLevel {
   if (environment.NODE_ENV === 'production') return 'off';
   const configured = environment.BAZAK_SERVER_DIAGNOSTICS?.trim().toLocaleLowerCase('en-US');
@@ -107,6 +136,10 @@ export function createServerDiagnosticReporter(input: {
       }
       if (event.stage === 'catalog_search') {
         emit({ ...event, intentId: hash(event.intentId, 10) });
+        return;
+      }
+      if (event.stage === 'catalog_boundary') {
+        emit({ ...event, query: diagnosticCatalogQuery(event.query, level) });
         return;
       }
       emit(event);

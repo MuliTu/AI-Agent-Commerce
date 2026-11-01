@@ -3,6 +3,7 @@ import {
   explicitUsdMaxPrice,
   intentHasExplicitUsdBudget,
   isConstraintOnlyFollowUp,
+  requestsComparativeAffordability,
   resolveCatalogCategory,
 } from '../../src/lib/orchestration/category-resolution';
 
@@ -47,6 +48,19 @@ describe('follow-up classification', () => {
   });
 
   expect(explicitUsdMaxPrice('show only options under $300')).toBe(300);
+
+  it.each([
+    'Could you make those more affordable?',
+    'Find lower-priced alternatives.',
+    'I need something less expensive than that.',
+    'תראה אפשרויות פחות יקרות',
+  ])('recognizes comparative affordability: %s', (prompt) => {
+    expect(requestsComparativeAffordability(prompt)).toBe(true);
+  });
+
+  it.each(['Show affordable phones', 'Sort cheap phones from low to high', 'Budget smartphones'])('keeps non-comparative cheap requests distinct: %s', (prompt) => {
+    expect(requestsComparativeAffordability(prompt)).toBe(false);
+  });
 });
 
 describe('explicit USD budget recognition', () => {

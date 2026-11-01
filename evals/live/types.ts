@@ -25,6 +25,15 @@ export type ObjectiveExpectation = {
   comparativeAffordability?: {
     baselinePrice: number | null;
   };
+  productIdsPrefix?: number[];
+  productIdsExact?: number[];
+  semanticEvidence?: {
+    required: boolean;
+    onlyVerified?: boolean;
+    fallback?: 'allowed' | 'forbidden' | 'required';
+    ordering?: 'tier_score_baseline' | 'price_first';
+    exactQuotes?: boolean;
+  };
 };
 
 export type EvaluationTurn = {
@@ -103,7 +112,8 @@ export type TurnArtifact = {
     provider: string;
     model: string;
     executionIndependent: true;
-    providerIndependent: false;
+    providerIndependent: boolean;
+    modelIndependent: boolean;
     usage?: Record<string, unknown>;
   };
   status: EvaluationStatus;

@@ -479,7 +479,15 @@ describe('live QA functional regressions', () => {
   });
 
   it('asks which product owns an unscoped budget in a multi-product request', async () => {
-    const extractIntents = vi.fn();
+    const extractIntents = vi.fn(async () => ({
+      response: 'searching',
+      intents: [
+        { goal: 'phone', query: 'phone', constraints: { category: 'smartphones' } },
+        { goal: 'fragrance', query: 'fragrance', constraints: { category: 'fragrances', maxPrice: 300 } },
+      ],
+      operations: [{ op: 'search', intentIndex: 0 }, { op: 'search', intentIndex: 1 }],
+      priceSemantics: [{ kind: 'none' }, { kind: 'none' }],
+    }));
     const result = await createIntentOrchestrator({
       catalog: catalog(),
       extractIntents,
@@ -489,10 +497,10 @@ describe('live QA functional regressions', () => {
       prompt: 'Find a phone and a fragrance under $300',
     });
 
-    expect(extractIntents).not.toHaveBeenCalled();
+    expect(extractIntents).toHaveBeenCalledOnce();
     expect(result).toMatchObject({
       status: 'failed',
-      outcomes: [{ error: { code: 'unsupported_constraint', retryable: false } }],
+      outcomes: [{ intent: { status: 'needs_clarification' }, clarification: { reason: 'split' } }],
     });
     expect(result.response).toBe('It is unclear which product the budget applies to. Which product should I update?');
   });

@@ -18,6 +18,18 @@ export type CatalogClientOptions = {
   baseUrl?: string;
   fetch?: CatalogFetch;
   timeoutMs?: number;
+  boundaryAttempt?: () => number;
+  observeBoundary?: (event: {
+    operation: string;
+    attempt: number;
+    method: 'GET';
+    pathname: string;
+    query: Record<string, string>;
+    status: number | null;
+    durationMs: number;
+    products: Array<{ id: number; price: number }>;
+    errorCode?: string;
+  }) => void;
 };
 
 const paginationSchema = z.object({
@@ -63,11 +75,15 @@ export class DummyJsonCatalogClient {
   private readonly baseUrl: string;
   private readonly fetchImplementation: CatalogFetch;
   private readonly timeoutMs: number;
+  private readonly observeBoundary?: CatalogClientOptions['observeBoundary'];
+  private readonly boundaryAttempt: () => number;
 
   constructor(options: CatalogClientOptions = {}) {
     this.baseUrl = (options.baseUrl ?? 'https://dummyjson.com').replace(/\/+$/, '');
     this.fetchImplementation = options.fetch ?? globalThis.fetch;
     this.timeoutMs = options.timeoutMs ?? 10_000;
+    this.observeBoundary = options.observeBoundary;
+    this.boundaryAttempt = options.boundaryAttempt ?? (() => 1);
 
     if (!this.baseUrl) throw new Error('Catalog baseUrl must not be empty');
     if (!Number.isFinite(this.timeoutMs) || this.timeoutMs <= 0) {
@@ -124,11 +140,14 @@ export class DummyJsonCatalogClient {
     const endpoint = search?.size ? `${path}?${search.toString()}` : path;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const startedAt = Date.now();
+    let status: number | null = null;
     try {
       const response = await this.fetchImplementation(`${this.baseUrl}${endpoint}`, {
         headers: { accept: 'application/json' },
         signal: controller.signal,
       });
+      status = response.status;
       if (!response.ok) {
         throw new CatalogError('http', `Catalog request returned HTTP ${response.status} for ${path}`, {
           endpoint: path,
@@ -143,8 +162,26 @@ export class DummyJsonCatalogClient {
           cause: result.error,
         });
       }
-      return result.data;
+      const value = result.data;
+      const candidates = value && typeof value === 'object' && 'products' in value && Array.isArray(value.products)
+        ? value.products
+        : value && typeof value === 'object' && 'id' in value ? [value] : [];
+      this.observeBoundary?.({
+        operation: path, attempt: this.boundaryAttempt(), method: 'GET', pathname: path,
+        query: Object.fromEntries(search ?? []), status, durationMs: Date.now() - startedAt,
+        products: candidates.flatMap((candidate) => candidate && typeof candidate === 'object'
+          && typeof (candidate as { id?: unknown }).id === 'number'
+          && typeof (candidate as { price?: unknown }).price === 'number'
+          ? [{ id: (candidate as { id: number }).id, price: (candidate as { price: number }).price }]
+          : []),
+      });
+      return value;
     } catch (error) {
+      this.observeBoundary?.({
+        operation: path, attempt: this.boundaryAttempt(), method: 'GET', pathname: path,
+        query: Object.fromEntries(search ?? []), status, durationMs: Date.now() - startedAt,
+        products: [], errorCode: error instanceof CatalogError ? error.kind : 'network',
+      });
       if (error instanceof CatalogError) throw error;
       if (controller.signal.aborted) {
         throw new CatalogError('timeout', `Catalog request timed out for ${path}`, {

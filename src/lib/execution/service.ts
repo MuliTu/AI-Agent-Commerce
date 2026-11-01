@@ -9,6 +9,7 @@ import { buildConversationContext, nextConversationMemoryState } from './convers
 import type { OrchestrationDecisionDiagnostic } from '../diagnostics/server-trace';
 
 type BoundedDisplayedProductReference = {
+  referenceId: string;
   intentId: string;
   position: number;
   product: {
@@ -27,6 +28,7 @@ type RunInput = {
   retryIntentId?: string;
   clarification?: ClarificationAnswer;
   displayedProductReference?: BoundedDisplayedProductReference;
+  pausedOutcomes?: OrchestrationResult['outcomes'];
   observeDecision?: (event: OrchestrationDecisionDiagnostic) => void;
 };
 
@@ -217,8 +219,10 @@ export class ConversationExecutionService {
         : await this.run({
             ...input,
             previous: context.previous,
+            pausedOutcomes: context.pausedOutcomes,
             ...(context.displayedProductReference ? {
               displayedProductReference: {
+                referenceId: context.displayedProductReference.referenceId,
                 intentId: context.displayedProductReference.intentId,
                 position: context.displayedProductReference.position,
                 product: context.displayedProductReference.product,
@@ -237,11 +241,25 @@ export class ConversationExecutionService {
         context,
         result,
       });
+      const catalogBoundaries = observedDecisions.filter(
+        (event): event is Extract<OrchestrationDecisionDiagnostic, { stage: 'catalog_boundary' }> =>
+          event.stage === 'catalog_boundary',
+      );
       const catalogSearches = observedDecisions.filter(
         (event): event is Extract<OrchestrationDecisionDiagnostic, { stage: 'catalog_search' }> =>
           event.stage === 'catalog_search',
       );
-      const toolRuns = catalogSearches.map((event, index) => {
+      const toolRuns = catalogBoundaries.length > 0 ? catalogBoundaries.map((event, index) => ({
+        id: `${input.turnId}:catalog:${index}`,
+        turnId: input.turnId,
+        toolName: event.operation,
+        attempt: event.attempt,
+        input: { method: event.method, pathname: event.pathname, query: event.query },
+        outputReference: { status: event.status, durationMs: event.durationMs, products: event.products },
+        ...(event.errorCode ? { errorCode: event.errorCode } : {}),
+        startedAt: completedAt,
+        completedAt,
+      })) : catalogSearches.map((event, index) => {
         const outcome = result.outcomes.find(({ intent }) => intent.id === event.intentId);
         return {
           id: `${input.turnId}:catalog:${index}`,

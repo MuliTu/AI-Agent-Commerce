@@ -1,5 +1,6 @@
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { AgentBoundaryError } from '../../src/lib/agent';
@@ -9,9 +10,10 @@ import { runLiveOrchestration } from '../../src/lib/orchestration/live';
 import { CommerceRepository } from '../../src/lib/persistence';
 import { evaluateObjectiveAssertions } from './assertions';
 import { withCatalogCapture } from './catalog-capture';
-import { judgeTurn } from './judge';
+import { judgeTurn, type JudgeConfiguration } from './judge';
 import { liveEvaluationScenarios } from './scenarios';
 import type { EvaluationScenario, EvaluationStatus, TurnArtifact } from './types';
+import type { ConfiguredEnvironment } from '../../src/lib/config/environment';
 
 type RunSummary = {
   schemaVersion: 1;
@@ -19,9 +21,14 @@ type RunSummary = {
   startedAt: string;
   completedAt: string;
   candidateRevision: string;
+  candidateWorktreeSha256: string;
   harnessCompatibilityBase: '2435b86';
   provider: string;
   model: string | null;
+  judgeProvider: string | null;
+  judgeModel: string | null;
+  judgeProviderIndependent: boolean;
+  judgeModelIndependent: boolean;
   databasePath: string;
   artifactDirectory: string;
   scenarioCount: number;
@@ -96,6 +103,24 @@ function samePersistedJson(left: unknown, right: unknown): boolean {
   return JSON.stringify(canonicalize(left)) === JSON.stringify(canonicalize(right));
 }
 
+function judgeConfigurationFrom(environment: ConfiguredEnvironment, input: Record<string, string | undefined>): JudgeConfiguration {
+  const configuredProvider = input.BAZAK_EVAL_JUDGE_PROVIDER?.trim();
+  if (configuredProvider && configuredProvider !== 'openai' && configuredProvider !== 'litellm') {
+    throw new Error('BAZAK_EVAL_JUDGE_PROVIDER must be openai or litellm.');
+  }
+  const provider: JudgeConfiguration['provider'] = configuredProvider === 'openai' || configuredProvider === 'litellm'
+    ? configuredProvider
+    : environment.LLM_PROVIDER;
+  return {
+    provider,
+    model: input.BAZAK_EVAL_JUDGE_MODEL?.trim() || environment.LLM_MODEL,
+    apiKey: input.BAZAK_EVAL_JUDGE_API_KEY?.trim() || environment.LLM_API_KEY,
+    baseUrl: input.BAZAK_EVAL_JUDGE_BASE_URL?.trim() || environment.LLM_BASE_URL,
+    applicationProvider: environment.LLM_PROVIDER,
+    applicationModel: environment.LLM_MODEL,
+  };
+}
+
 export function createIsolatedDatabasePath(environment: NodeJS.ProcessEnv = process.env): string {
   const directory = mkdtempSync(join(tmpdir(), 'bazak-live-eval-'));
   const databasePath = join(directory, 'commerce.sqlite');
@@ -122,21 +147,48 @@ function currentGitRevision(): string {
   }
 }
 
+function currentWorktreeIdentity(): string {
+  try {
+    const hash = createHash('sha256');
+    hash.update(execFileSync('git', ['diff', '--binary', 'HEAD']));
+    const untracked = execFileSync('git', ['ls-files', '--others', '--exclude-standard', '-z'])
+      .toString('utf8').split('\0').filter(Boolean).sort();
+    for (const path of untracked) {
+      hash.update(path);
+      hash.update(readFileSync(path));
+    }
+    return hash.digest('hex');
+  } catch {
+    return 'unknown';
+  }
+}
+
 export async function runLiveEvaluation(input: { scenarios?: EvaluationScenario[] } = {}): Promise<RunSummary> {
   const startedAt = new Date().toISOString();
   const runId = `${startedAt.replace(/[:.]/gu, '-')}-${process.pid}`;
   const artifactDirectory = configuredArtifactDirectory(runId);
   const databasePath = createIsolatedDatabasePath();
   const environment = parseEnvironment(process.env);
-  const scenarios = input.scenarios ?? liveEvaluationScenarios;
+  const judgeConfiguration: JudgeConfiguration | null = isProviderConfigured(environment)
+    ? judgeConfigurationFrom(environment, process.env)
+    : null;
+  const requestedScenarioIds = new Set((process.env.BAZAK_EVAL_SCENARIO_IDS ?? '')
+    .split(',').map((value) => value.trim()).filter(Boolean));
+  const scenarios = (input.scenarios ?? liveEvaluationScenarios)
+    .filter(({ id }) => requestedScenarioIds.size === 0 || requestedScenarioIds.has(id));
   const summaryBase = {
     schemaVersion: 1 as const,
     runId,
     startedAt,
     candidateRevision: currentGitRevision(),
+    candidateWorktreeSha256: currentWorktreeIdentity(),
     harnessCompatibilityBase: '2435b86' as const,
     provider: environment.LLM_PROVIDER,
     model: environment.LLM_PROVIDER === 'disabled' ? null : environment.LLM_MODEL,
+    judgeProvider: judgeConfiguration?.provider ?? null,
+    judgeModel: judgeConfiguration?.model ?? null,
+    judgeProviderIndependent: judgeConfiguration ? judgeConfiguration.provider !== judgeConfiguration.applicationProvider : false,
+    judgeModelIndependent: judgeConfiguration ? judgeConfiguration.provider !== judgeConfiguration.applicationProvider || judgeConfiguration.model !== judgeConfiguration.applicationModel : false,
     databasePath,
     artifactDirectory,
     scenarioCount: scenarios.length,
@@ -256,7 +308,7 @@ export async function runLiveEvaluation(input: { scenarios?: EvaluationScenario[
         if (result && deterministicStatus !== 'INCONCLUSIVE') {
           try {
             judgeCalls += 1;
-            judge = await judgeTurn(baseArtifact, environment);
+            judge = await judgeTurn(baseArtifact, judgeConfiguration!);
           } catch (error) {
             executionError ??= error;
           }
@@ -306,4 +358,5 @@ export const liveEvaluationInternals = {
   resultContainsUnavailableInfrastructure,
   catalogCaptureShowsUnavailableInfrastructure,
   samePersistedJson,
+  judgeConfigurationFrom,
 };

@@ -226,6 +226,19 @@ Persist only what is necessary. Secrets, raw provider credentials, and unnecessa
 - Refreshing or reconnecting from another client can recover server-persisted conversation state.
 - The project-authored reliability target is five total transient attempts; the current live initial-execution gap is documented and remains deferred.
 - One intent can fail without discarding successful sibling intents.
+
+## 12. Approved semantic action resolution extension
+
+The planning boundary returns one ordered semantic action plan from the existing provider call. Actions distinguish new searches, refinements, durable pause/resume, displayed-product selection/description, and clarification. Targets use trusted prior-intent IDs; displayed products use opaque application-issued reference IDs. The provider never supplies trusted product identity or price facts.
+
+Price semantics are explicit and non-interchangeable:
+
+- `sort_low_to_high` orders the hard-filtered candidate set by catalog price. Price order has priority over semantic tier and relevance score; semantic signals may break equal-price ties only.
+- `cheaper_than_reference` requires a trusted displayed-product price or an explicit shopper maximum. Without either, the turn clarifies before a product search. Re-sorting the same set is not a comparative result.
+
+The application validates every action and reference before product retrieval, then executes operations in order and commits the resulting state atomically. Paused outcomes are durable, excluded from active targeting and rendering, and may be resumed later without transcript replay. Existing state without paused outcomes remains valid and is upgraded lazily on a later completed turn.
+
+Evaluation data has two scopes. Production persistence stores bounded structural action/tool evidence, correlation IDs, attempts, product IDs/prices and response digests; it excludes credentials, raw provider envelopes, catalog descriptions and unnecessary raw prompts. Explicit local live-evaluation runs may store full prompts and captured catalog payloads under an ignored project-local artifact directory. Those artifacts are retained until deliberately archived or removed by the user and must never be committed or transmitted implicitly.
 - The UI describes interrupted/stale work honestly; it does not claim survival across server shutdown.
 
 ## 12. Non-functional requirements

@@ -252,3 +252,27 @@ This log records current decisions and proposals. “Accepted” means accepted 
 - Whether GPT-5.4-mini credentials/access are supplied
 - The semantic representation and final ranking weights
 - Whether authentication, cart, checkout, or transactional actions are required
+
+## D-19 — Use one ordered semantic action plan
+
+**Decision:** Replace competing intent-only and phrase-gate decisions with one ordered action plan from the existing provider call. Search, refine, pause, resume, select/describe and clarify are distinct operations. Existing-intent and displayed-product references are validated application facts; product references are opaque and independent of intent records.
+
+**Why:** Topic deactivation, ordinal description and comparative price meaning are actions, not catalog constraints. Encoding them explicitly prevents a lexical pre-check or later repair step from silently changing the action. A second model call was rejected because it adds latency, cost and another disagreement boundary.
+
+**Execution:** Validate the whole plan before product retrieval, execute it in order through a staged reducer, and persist the terminal projection atomically. Invalid references and ambiguous scopes fail closed. Durable paused outcomes are retained separately from active outcomes and may be resumed later. Old projection JSON remains backward compatible through an optional bounded field.
+
+## D-20 — Separate price ordering from price comparison
+
+**Decision:** Ascending price sort and comparative affordability are different structured semantics. Explicit price sort outranks semantic tier/score, with stable semantic/baseline tie-breaking only among equal prices. Comparative affordability requires a trusted displayed-product price or explicit maximum; without one the assistant clarifies before catalog search.
+
+**Rejected alternatives:** Treating every affordability phrase as `price_asc` fails the shopper's comparison; inventing a median or threshold is unsupported; letting semantic tier precede an explicit price sort contradicts the requested order.
+
+## D-21 — Bound evaluation evidence by environment
+
+**Decision:** Production diagnostics persist bounded action transitions, validation reason codes, actual catalog request arguments/attempts/status, response digests and returned product IDs/prices. They exclude credentials, raw provider envelopes, catalog descriptions and unnecessary prompt text. Explicit local live evaluation may retain raw prompts/catalog payloads in ignored project-local artifacts for reproducibility.
+
+**Retention:** Local evaluation artifacts are user-controlled project evidence, not application data. Runs never overwrite an existing directory, and no cleanup, commit or transmission is automatic. Reassessment retains the original artifact and writes a new versioned directory; a changed criterion invalidates the old judge verdict without altering raw evidence.
+
+**Judge independence:** The live harness accepts an explicit judge provider/model configuration while defaulting to the already configured application provider/model. Artifacts truthfully record execution independence, provider independence and model independence separately. A different model on the same provider is model-independent but not provider-independent; the default is neither. Deterministic failures remain authoritative in every configuration.
+
+**Limits:** A distinct judge may improve calibration but adds another paid call, latency and model-specific variance per turn. It does not make a subjective verdict objective. No distinct credential or provider is provisioned by the harness; operators must explicitly supply an already authorized configuration, and absence/unavailability remains `INCONCLUSIVE`.

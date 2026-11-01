@@ -1,8 +1,16 @@
 import { generateText, Output } from 'ai';
 import { z } from 'zod';
 import { createProviderModel } from '../../src/lib/agent/model';
-import type { ConfiguredEnvironment } from '../../src/lib/config/environment';
 import type { TurnArtifact } from './types';
+
+export type JudgeConfiguration = {
+  provider: 'openai' | 'litellm';
+  model: string;
+  apiKey: string;
+  baseUrl: string;
+  applicationProvider: 'openai' | 'litellm';
+  applicationModel: string;
+};
 
 const judgeSchema = z.object({
   status: z.enum(['PASS', 'FAIL', 'INCONCLUSIVE']),
@@ -16,13 +24,13 @@ const judgeSchema = z.object({
 
 export async function judgeTurn(
   artifact: Omit<TurnArtifact, 'judge' | 'status' | 'reasons'>,
-  environment: ConfiguredEnvironment,
+  configuration: JudgeConfiguration,
 ) {
   const model = createProviderModel(
-    environment.LLM_MODEL,
-    environment.LLM_API_KEY,
-    environment.LLM_BASE_URL,
-    environment.LLM_PROVIDER === 'litellm' ? 'chat' : 'responses',
+    configuration.model,
+    configuration.apiKey,
+    configuration.baseUrl,
+    configuration.provider === 'litellm' ? 'chat' : 'responses',
   );
   const result = await generateText({
     model,
@@ -46,17 +54,19 @@ export async function judgeTurn(
     maxRetries: 0,
     providerOptions: {
       openai: {
-        strictJsonSchema: environment.LLM_PROVIDER !== 'litellm',
-        ...(environment.LLM_PROVIDER === 'litellm' ? { reasoningEffort: 'none' as const } : {}),
+        strictJsonSchema: configuration.provider !== 'litellm',
+        ...(configuration.provider === 'litellm' ? { reasoningEffort: 'none' as const } : {}),
       },
     },
   });
   return {
     ...result.output,
-    provider: environment.LLM_PROVIDER,
-    model: environment.LLM_MODEL,
+    provider: configuration.provider,
+    model: configuration.model,
     executionIndependent: true as const,
-    providerIndependent: false as const,
+    providerIndependent: configuration.provider !== configuration.applicationProvider,
+    modelIndependent: configuration.provider !== configuration.applicationProvider
+      || configuration.model !== configuration.applicationModel,
     usage: result.usage as unknown as Record<string, unknown>,
   };
 }

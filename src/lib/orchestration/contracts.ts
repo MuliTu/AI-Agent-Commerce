@@ -21,8 +21,40 @@ export const extractedIntentSchema = z.object({
   status: z.enum(['ready', 'needs_clarification']).default('ready'),
 }).strict();
 
+export const priceSemanticsSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('none') }).strict(),
+  z.object({ kind: z.literal('sort_low_to_high') }).strict(),
+  z.object({
+    kind: z.literal('cheaper_than_reference'),
+    referenceId: z.string().trim().min(1).optional(),
+  }).strict(),
+]);
+
+export const semanticOperationSchema = z.discriminatedUnion('op', [
+  z.object({ op: z.literal('pause_intent'), intentId: z.string().trim().min(1) }).strict(),
+  z.object({ op: z.literal('resume_intent'), intentId: z.string().trim().min(1) }).strict(),
+  z.object({ op: z.literal('search'), intentIndex: z.number().int().nonnegative() }).strict(),
+  z.object({
+    op: z.literal('refine_intent'),
+    intentIndex: z.number().int().nonnegative(),
+    intentId: z.string().trim().min(1),
+  }).strict(),
+  z.object({
+    op: z.literal('select_product'),
+    referenceId: z.string().trim().min(1),
+    presentation: z.enum(['show', 'describe']),
+  }).strict(),
+  z.object({
+    op: z.literal('clarify'),
+    reason: z.enum(['missing_intent_target', 'missing_price_reference', 'ambiguous_budget_scope', 'unsupported_constraint']),
+    candidateIntentIds: z.array(z.string().trim().min(1)).default([]),
+  }).strict(),
+]);
+
 export const extractedTurnPlanSchema = z.object({
   intents: z.array(extractedIntentSchema).min(1).max(8),
+  operations: z.array(semanticOperationSchema).min(1).max(16).optional(),
+  priceSemantics: z.array(priceSemanticsSchema).max(8).optional(),
   response: z.string().trim().min(1),
 }).strict();
 
@@ -58,6 +90,49 @@ const providerExtractedIntentSchema = z.object({
   status: intent.status,
 }));
 
+const providerPriceSemanticsSchema = z.object({
+  kind: z.enum(['none', 'sort_low_to_high', 'cheaper_than_reference']),
+  referenceId: z.string().trim().min(1).nullable(),
+}).strict().transform(({ kind, referenceId }) => (
+  kind === 'cheaper_than_reference'
+    ? { kind, ...(referenceId === null ? {} : { referenceId }) }
+    : { kind }
+));
+
+const providerSemanticOperationSchema = z.object({
+  op: z.enum(['pause_intent', 'resume_intent', 'search', 'refine_intent', 'select_product', 'clarify']),
+  intentId: z.string().trim().min(1).nullable(),
+  intentIndex: z.number().int().nonnegative().nullable(),
+  referenceId: z.string().trim().min(1).nullable(),
+  presentation: z.enum(['show', 'describe']).nullable(),
+  reason: z.enum(['missing_intent_target', 'missing_price_reference', 'ambiguous_budget_scope', 'unsupported_constraint']).nullable(),
+  candidateIntentIds: z.array(z.string().trim().min(1)),
+}).strict().transform((operation, context) => {
+  const fail = (message: string): never => {
+    context.addIssue({ code: 'custom', message });
+    return z.NEVER;
+  };
+  switch (operation.op) {
+    case 'pause_intent':
+    case 'resume_intent':
+      return operation.intentId ? { op: operation.op, intentId: operation.intentId } : fail(`${operation.op} requires intentId`);
+    case 'search':
+      return operation.intentIndex !== null ? { op: operation.op, intentIndex: operation.intentIndex } : fail('search requires intentIndex');
+    case 'refine_intent':
+      return operation.intentId && operation.intentIndex !== null
+        ? { op: operation.op, intentId: operation.intentId, intentIndex: operation.intentIndex }
+        : fail('refine_intent requires intentId and intentIndex');
+    case 'select_product':
+      return operation.referenceId && operation.presentation
+        ? { op: operation.op, referenceId: operation.referenceId, presentation: operation.presentation }
+        : fail('select_product requires referenceId and presentation');
+    case 'clarify':
+      return operation.reason
+        ? { op: operation.op, reason: operation.reason, candidateIntentIds: operation.candidateIntentIds }
+        : fail('clarify requires reason');
+  }
+});
+
 /**
  * Provider-facing wire schema. OpenAI structured outputs require every object
  * property to be required, so optional domain values are nullable on the wire
@@ -65,6 +140,8 @@ const providerExtractedIntentSchema = z.object({
  */
 export const providerExtractedTurnPlanSchema = z.object({
   intents: z.array(providerExtractedIntentSchema).min(1).max(8),
+  operations: z.array(providerSemanticOperationSchema).min(1).max(16),
+  priceSemantics: z.array(providerPriceSemanticsSchema).min(1).max(8),
   response: z.string().trim().min(1),
 }).strict();
 
@@ -117,10 +194,17 @@ export const orchestrationResultSchema = z.object({
       retryable: z.boolean(),
     }).strict().optional(),
   }).strict()),
+  stateActions: z.object({
+    pauseIntentIds: z.array(z.string().trim().min(1)).default([]),
+    resumeIntentIds: z.array(z.string().trim().min(1)).default([]),
+    selectedProduct: z.boolean().optional(),
+  }).strict().optional(),
 }).strict();
 
 export type ExtractedTurnPlan = z.infer<typeof extractedTurnPlanSchema>;
 export type ExtractedIntent = z.infer<typeof extractedIntentSchema>;
+export type SemanticOperation = z.infer<typeof semanticOperationSchema>;
+export type PriceSemantics = z.infer<typeof priceSemanticsSchema>;
 
 export type IntentOutcome = {
   intent: ShoppingIntent;
@@ -140,15 +224,24 @@ export type OrchestrationResult = {
   status: TurnStatus;
   response: string;
   outcomes: IntentOutcome[];
+  stateActions?: { pauseIntentIds: string[]; resumeIntentIds: string[]; selectedProduct?: boolean };
 };
 
 export type IntentExtractionContext = {
   prompt: string;
   displayedProductReference?: {
+    referenceId?: string;
     intentId: string;
     position: number;
     product: Pick<Product, 'id' | 'title' | 'price' | 'category'>;
   };
+  pausedIntents?: Array<{
+    id: string;
+    goal: string;
+    query: string;
+    constraints: Constraints;
+    status: ShoppingIntent['status'];
+  }>;
   previousIntents: Array<{
     id: string;
     goal: string;

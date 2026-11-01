@@ -29,6 +29,21 @@ describe('live evaluation harness mechanics', () => {
     expect(liveEvaluationInternals.combineStatus('PASS', 'PASS')).toBe('PASS');
   });
 
+  it('records model and provider judge independence from explicit configuration', () => {
+    const configured = liveEvaluationInternals.judgeConfigurationFrom({
+      LLM_PROVIDER: 'openai', LLM_MODEL: 'gpt-5.4-mini', LLM_API_KEY: 'secret', LLM_BASE_URL: 'https://api.openai.com/v1',
+    }, {
+      BAZAK_EVAL_JUDGE_PROVIDER: 'litellm',
+      BAZAK_EVAL_JUDGE_MODEL: 'review-model',
+      BAZAK_EVAL_JUDGE_API_KEY: 'other-secret',
+      BAZAK_EVAL_JUDGE_BASE_URL: 'http://127.0.0.1:4001/v1',
+    });
+    expect(configured).toMatchObject({ provider: 'litellm', model: 'review-model', applicationProvider: 'openai', applicationModel: 'gpt-5.4-mini' });
+    expect(() => liveEvaluationInternals.judgeConfigurationFrom({
+      LLM_PROVIDER: 'openai', LLM_MODEL: 'gpt-5.4-mini', LLM_API_KEY: 'secret', LLM_BASE_URL: 'https://api.openai.com/v1',
+    }, { BAZAK_EVAL_JUDGE_PROVIDER: 'unknown' })).toThrow('must be openai or litellm');
+  });
+
   it('recognizes scoped catalog failures and captured transport failures as infrastructure evidence', () => {
     expect(liveEvaluationInternals.resultContainsUnavailableInfrastructure({
       turnId: 'turn',
@@ -133,5 +148,65 @@ describe('live evaluation harness mechanics', () => {
       rawOutput: { total: 1, skip: 5, limit: 10 },
     });
     expect(captured.calls[1]?.requestOccurrence).toBe(2);
+  });
+
+  it('fails duplicate returned IDs and semantic evidence that is not an exact catalog quote', () => {
+    const product = { id: 7, title: 'Catalog Phone', description: 'Documented camera.', price: 42, category: 'smartphones', tags: [] };
+    const assertions = evaluateObjectiveAssertions({
+      turn: { id: 'semantic', prompt: 'camera phone', expected: { semanticEvidence: { required: true, exactQuotes: true, fallback: 'forbidden' } } },
+      result: {
+        turnId: 'turn', status: 'completed', response: 'Results.',
+        outcomes: [{
+          intent: { id: 'phone', goal: 'camera phone', query: 'camera phone', constraints: { category: 'smartphones' }, status: 'completed' },
+          products: [1, 2].map(() => ({ product: product as never, score: 1, matchReasons: [], semanticRelevance: { tier: 'supported' as const, score: 1, confidence: 1, evidence: [{ field: 'description' as const, quote: 'invented quote' }] } })),
+          semanticStatus: 'applied',
+        }],
+      },
+      stateAfter: { conversationId: 'c', revision: 1, lastTurnId: 'turn', updatedAt: 'now', lastOperation: 'add' },
+      catalogCalls: [{ sequence: 0, requestOccurrence: 1, url: 'https://dummyjson.com/products', method: 'GET', pathname: '/products', query: {}, startedAt: 'now', completedAt: 'now', status: 200, ok: true, rawOutput: { products: [product] }, returnedProducts: [product], error: null }],
+      catalogCaptureComplete: true,
+      snapshots: [{ id: 's', turnId: 'turn', intentId: 'phone', products: [product] as never, createdAt: 'now' }],
+      persistenceRecovered: true,
+    });
+    expect(assertions).toContainEqual(expect.objectContaining({ id: 'unique-returned-product-ids', status: 'FAIL' }));
+    expect(assertions).toContainEqual(expect.objectContaining({ id: 'semantic-evidence-exact-quotes', status: 'FAIL' }));
+  });
+
+  it('asserts price-first and tier-score semantic ordering without weakening hard filters', () => {
+    const products = [
+      { id: 1, title: 'A', description: 'camera', price: 100, rating: 4, stock: 2, category: 'smartphones', tags: [] },
+      { id: 2, title: 'B', description: 'camera', price: 200, rating: 5, stock: 2, category: 'smartphones', tags: [] },
+    ];
+    const assertions = evaluateObjectiveAssertions({
+      turn: { id: 'price', prompt: 'cheap phones', expected: { semanticEvidence: { required: true, ordering: 'price_first', exactQuotes: true } } },
+      result: { turnId: 'turn', status: 'completed', response: 'Results.', outcomes: [{
+        intent: { id: 'phone', goal: 'phones', query: 'phones', constraints: { category: 'smartphones', maxPrice: 150, sort: 'price_asc' }, status: 'completed' },
+        products: products.map((product, index) => ({ product: product as never, score: 1, matchReasons: [], semanticRelevance: { tier: (index ? 'supported' : 'partial') as 'supported' | 'partial', score: index ? 1 : 0.5, confidence: 1, evidence: [{ field: 'description' as const, quote: 'camera' }] } })),
+      }] },
+      stateAfter: { conversationId: 'c', revision: 1, lastTurnId: 'turn', updatedAt: 'now', lastOperation: 'add' },
+      catalogCalls: [{ sequence: 0, requestOccurrence: 1, url: 'https://dummyjson.com/products', method: 'GET', pathname: '/products', query: {}, startedAt: 'now', completedAt: 'now', status: 200, ok: true, rawOutput: { products }, returnedProducts: products, error: null }],
+      catalogCaptureComplete: true,
+      snapshots: [{ id: 's', turnId: 'turn', intentId: 'phone', products: products as never, createdAt: 'now' }],
+      persistenceRecovered: true,
+    });
+    expect(assertions).toContainEqual(expect.objectContaining({ id: 'semantic-ordering', status: 'PASS' }));
+    expect(assertions).toContainEqual(expect.objectContaining({ id: 'hard-filter-precedence', status: 'FAIL' }));
+
+    const equalPriceProducts = products.map((product) => ({ ...product, price: 100 }));
+    const wrongTieOrder = evaluateObjectiveAssertions({
+      turn: { id: 'tie', prompt: 'cheap phones', expected: { semanticEvidence: { required: true, ordering: 'price_first', exactQuotes: true } } },
+      result: { turnId: 'tie-turn', status: 'completed', response: 'Results.', outcomes: [{
+        intent: { id: 'phone', goal: 'phones', query: 'phones', constraints: { category: 'smartphones', sort: 'price_asc' }, status: 'completed' },
+        products: equalPriceProducts.map((product, index) => ({ product: product as never, score: 1 - index,
+          matchReasons: [], semanticRelevance: { tier: 'supported' as const, score: index ? 1 : 0.5, confidence: 1,
+            evidence: [{ field: 'description' as const, quote: 'camera' }] } })),
+      }] },
+      stateAfter: { conversationId: 'c', revision: 1, lastTurnId: 'tie-turn', updatedAt: 'now', lastOperation: 'add' },
+      catalogCalls: [{ sequence: 0, requestOccurrence: 1, url: 'https://dummyjson.com/products', method: 'GET', pathname: '/products', query: {}, startedAt: 'now', completedAt: 'now', status: 200, ok: true, rawOutput: { products: equalPriceProducts }, returnedProducts: equalPriceProducts, error: null }],
+      catalogCaptureComplete: true,
+      snapshots: [{ id: 's', turnId: 'tie-turn', intentId: 'phone', products: equalPriceProducts as never, createdAt: 'now' }],
+      persistenceRecovered: true,
+    });
+    expect(wrongTieOrder).toContainEqual(expect.objectContaining({ id: 'semantic-ordering', status: 'FAIL' }));
   });
 });

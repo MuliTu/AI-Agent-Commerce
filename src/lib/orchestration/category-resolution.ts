@@ -80,7 +80,14 @@ export function isConstraintOnlyFollowUp(
   availableCategories: readonly string[],
 ): boolean {
   if (resolveCatalogCategory(undefined, prompt, availableCategories)) return false;
-  return /(?:\b(?:under|below|less than|at most|max(?:imum)?|budget|cheaper|cheap|cheapest|only in stock|in stock only)\b|\$\s*\d|\d\s*(?:USD|dollars?)\b|(?:עד|פחות מ|תקציב|זול(?:ה|ים|ות)?|רק במלאי))/iu.test(prompt);
+  return /(?:\b(?:under|below|less than|at most|max(?:imum)?|budget|cheaper|cheap|cheapest|affordable|lower[ -]priced|less expensive|only in stock|in stock only)\b|\$\s*\d|\d\s*(?:USD|dollars?)\b|(?:עד|פחות מ|תקציב|זול(?:ה|ים|ות)?|רק במלאי))/iu.test(prompt);
+}
+
+/** Distinguishes a relative price change from a non-comparative request to
+ * sort inexpensive products. The grammar intentionally recognizes broad
+ * comparative forms rather than any one evaluation sentence. */
+export function requestsComparativeAffordability(prompt: string): boolean {
+  return /(?:\b(?:cheaper|lower[ -]priced|less expensive|more affordable|more budget[ -]friendly|budget[ -]friendlier)\b|(?:יותר\s+זול|זול\s+יותר|פחות\s+יקר|יותר\s+משתלם))/iu.test(prompt);
 }
 
 export function explicitUsdMaxPrice(prompt: string): number | undefined {

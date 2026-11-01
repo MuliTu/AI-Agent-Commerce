@@ -222,6 +222,17 @@ Execute the five bounded tasks in `QA_REMEDIATION_TASKS_2026-10-30.md`, integrat
 3. Add real-shaped Vivo V9, generic selfie-camera, unrelated camera-phone, and over-budget controls; verify deterministic price filtering still occurs before semantic evaluation.
 4. Rerun deterministic and browser gates, then hand Q02 to independent live QA. Do not use the implementation run to self-certify model stability.
 
+## Semantic action resolution implementation sequence (approved)
+
+1. Strengthen the separate live harness first: preserve Q01–Q15, assert unique grounded IDs, hard-filter precedence, exact evidence quotes, tier/score ordering, strict-only behavior, fallback disclosure and explicit price-first ordering. Preserve ordinary Vitest/Playwright discovery.
+2. Add a provider-facing ordered action schema while retaining the existing single provider call. Use opaque application-resolved displayed-product references and trusted existing-intent IDs.
+3. Validate the complete action plan before product search. Invalid/stale references, ambiguous budget ownership and comparative price requests without a trusted baseline clarify or fail closed without catalog retrieval.
+4. Execute actions through a staged reducer. Persist active results, bounded durable paused outcomes, focus and decision/tool evidence in the existing atomic completion transaction. Old state remains readable without a destructive migration.
+5. Add English/Hebrew paraphrase, negative, idempotency and process/repository recreation tests. Run the same named live scenarios before and after; reuse trustworthy saved evidence where acceptance criteria have not changed, and mark changed-criterion judge evidence inconclusive rather than spending calls implicitly.
+6. Obtain independent verification and review before a local commit. No push, merge or deployment is part of this plan.
+
+Stop and request approval if implementation requires another LLM call, a destructive data rewrite, a new dependency, or a production raw-prompt logging policy.
+
 ### Additive-topic follow-up and correlated diagnostics
 
 1. Reproduce phone → “Also show me perfumes under $100” → “Show me cheaper options” with a deterministic three-turn regression.

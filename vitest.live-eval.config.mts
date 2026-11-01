@@ -9,7 +9,7 @@ export default defineConfig({
   },
   test: {
     include: ['evals/live/live-eval.test.ts'],
-    testTimeout: 180_000,
+    testTimeout: 600_000,
     hookTimeout: 30_000,
     fileParallelism: false,
     maxWorkers: 1,

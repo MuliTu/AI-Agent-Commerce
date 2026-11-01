@@ -3,6 +3,7 @@ import type { OrchestrationResult } from '../orchestration/contracts';
 import type { ConversationMemoryState, IntentOperation } from '../persistence';
 
 export type DisplayedProductReference = {
+  referenceId: string;
   intentId: string;
   position: number;
   product: {
@@ -20,6 +21,7 @@ export type ConversationContext = {
   stateRevision: number;
   currentFocusIntentId?: string;
   displayedProductReference?: DisplayedProductReference;
+  pausedOutcomes?: OrchestrationResult['outcomes'];
 };
 
 export const MAX_ACTIVE_CONVERSATION_INTENTS = 8;
@@ -50,6 +52,7 @@ export function buildConversationContext(input: {
       previous,
       stateRevision: input.persistedState?.revision ?? 0,
       currentFocusIntentId: input.persistedState?.currentFocusIntentId,
+      pausedOutcomes: input.persistedState?.pausedOutcomes,
     };
   }
   const productOutcomes = previous.outcomes.filter(({ products }) => products.length > 0);
@@ -58,6 +61,7 @@ export function buildConversationContext(input: {
       previous,
       stateRevision: input.persistedState?.revision ?? 0,
       currentFocusIntentId: input.persistedState?.currentFocusIntentId,
+      pausedOutcomes: input.persistedState?.pausedOutcomes,
     };
   }
   const outcome = productOutcomes[0];
@@ -67,7 +71,9 @@ export function buildConversationContext(input: {
     previous,
     stateRevision: input.persistedState?.revision ?? 0,
     currentFocusIntentId: outcome.intent.id,
+    pausedOutcomes: input.persistedState?.pausedOutcomes,
     displayedProductReference: {
+      referenceId: `displayed:${outcome.intent.id}:${position}`,
       intentId: outcome.intent.id,
       position,
       product: {
@@ -124,30 +130,60 @@ export function nextConversationMemoryState(input: {
   context: ConversationContext;
   result: OrchestrationResult;
 }): ConversationMemoryState {
-  const selectedProduct = input.context.displayedProductReference?.selectionOnly === true;
+  const selectedProduct = input.context.displayedProductReference?.selectionOnly === true
+    || input.result.stateActions?.selectedProduct === true;
   const operation = inferOperation(input.context.previous, input.result, selectedProduct);
   const previousById = new Map(input.context.previous?.outcomes.map((outcome) => [outcome.intent.id, outcome]) ?? []);
   const changedOutcomes = input.result.outcomes.filter((outcome) =>
     !isDeepStrictEqual(previousById.get(outcome.intent.id), outcome));
+  const pauseIds = new Set(input.result.stateActions?.pauseIntentIds ?? []);
+  const resumeIds = new Set(input.result.stateActions?.resumeIntentIds ?? []);
+  const previouslyPaused = input.context.pausedOutcomes ?? [];
+  const previouslyPausedIds = new Set(previouslyPaused.map(({ intent }) => intent.id));
+  const resumedOutcomes = previouslyPaused.filter(({ intent }) => resumeIds.has(intent.id));
+  const newlyPaused = input.context.previous?.outcomes.filter(({ intent }) => pauseIds.has(intent.id)) ?? [];
+  const resultIntentIds = new Set(input.result.outcomes.map(({ intent }) => intent.id));
+  const hasStateMutation = pauseIds.size > 0 || resumeIds.size > 0;
   const unboundedActiveResult = operation === 'select_product'
     ? input.context.previous
     : operation === 'clarify' && input.context.previous
       ? {
           ...input.result,
           outcomes: [
-            ...input.context.previous.outcomes.filter(({ intent }) => !input.result.outcomes
+            ...input.context.previous.outcomes.filter(({ intent }) => !pauseIds.has(intent.id) && !input.result.outcomes
               .some(({ intent: currentIntent }) => currentIntent.id === intent.id)),
-            ...input.result.outcomes,
+            ...resumedOutcomes.filter(({ intent }) => !input.result.outcomes
+              .some(({ intent: currentIntent }) => currentIntent.id === intent.id)),
+            ...input.result.outcomes.filter(({ intent }) => !pauseIds.has(intent.id)
+              && (!previouslyPausedIds.has(intent.id) || resumeIds.has(intent.id))),
           ],
         }
-      : input.result;
+      : hasStateMutation
+        ? {
+            ...input.result,
+            outcomes: [
+              ...(input.context.previous?.outcomes ?? []).filter(({ intent }) => !pauseIds.has(intent.id)
+                && !resultIntentIds.has(intent.id)),
+              ...resumedOutcomes.filter(({ intent }) => !resultIntentIds.has(intent.id)),
+              ...input.result.outcomes.filter(({ intent }) => !pauseIds.has(intent.id)),
+            ],
+          }
+        : {
+          ...input.result,
+          outcomes: [
+            ...resumedOutcomes.filter(({ intent }) => !resultIntentIds.has(intent.id)),
+            ...input.result.outcomes.filter(({ intent }) => !pauseIds.has(intent.id)),
+          ],
+        };
   const activeResult = unboundedActiveResult && unboundedActiveResult.outcomes.length > MAX_ACTIVE_CONVERSATION_INTENTS
     ? { ...unboundedActiveResult, outcomes: unboundedActiveResult.outcomes.slice(-MAX_ACTIVE_CONVERSATION_INTENTS) }
     : unboundedActiveResult;
-  const focusCandidates = changedOutcomes.filter(({ intent }) =>
+  const activeIntentIds = new Set(activeResult?.outcomes.map(({ intent }) => intent.id) ?? []);
+  const activeChangedOutcomes = changedOutcomes.filter(({ intent }) => activeIntentIds.has(intent.id));
+  const focusCandidates = activeChangedOutcomes.filter(({ intent }) =>
     intent.status !== 'failed' && intent.status !== 'needs_clarification');
-  const clarificationFocus = changedOutcomes.find(({ intent }) => intent.status === 'needs_clarification')?.intent.id;
-  const focus = selectedProduct
+  const clarificationFocus = activeChangedOutcomes.find(({ intent }) => intent.status === 'needs_clarification')?.intent.id;
+  const proposedFocus = selectedProduct
     ? input.context.displayedProductReference?.intentId
     : focusCandidates.length === 1
       ? focusCandidates[0].intent.id
@@ -155,8 +191,11 @@ export function nextConversationMemoryState(input: {
         ? focusCandidates.find(({ intent }) => !input.context.previous?.outcomes
           .some(({ intent: previousIntent }) => previousIntent.id === intent.id))?.intent.id
         : operation === 'clarify'
-          ? clarificationFocus ?? input.context.currentFocusIntentId
-          : undefined;
+          ? clarificationFocus ?? (input.context.currentFocusIntentId
+            && activeIntentIds.has(input.context.currentFocusIntentId) ? input.context.currentFocusIntentId : undefined)
+          : hasStateMutation && input.context.currentFocusIntentId
+            && activeIntentIds.has(input.context.currentFocusIntentId) ? input.context.currentFocusIntentId : undefined;
+  const focus = proposedFocus && activeIntentIds.has(proposedFocus) ? proposedFocus : undefined;
   return {
     conversationId: input.conversationId,
     revision: input.context.stateRevision + 1,
@@ -165,5 +204,11 @@ export function nextConversationMemoryState(input: {
     lastOperation: operation,
     lastTurnId: input.turnId,
     updatedAt: input.completedAt,
+    pausedOutcomes: [
+      ...previouslyPaused.filter(({ intent }) => !resumeIds.has(intent.id) && !input.result.outcomes
+        .some(({ intent: currentIntent }) => currentIntent.id === intent.id)),
+      ...input.result.outcomes.filter(({ intent }) => previouslyPausedIds.has(intent.id) && !resumeIds.has(intent.id)),
+      ...newlyPaused.filter(({ intent }) => !previouslyPaused.some(({ intent: prior }) => prior.id === intent.id)),
+    ].slice(-MAX_ACTIVE_CONVERSATION_INTENTS),
   };
 }

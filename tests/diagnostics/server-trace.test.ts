@@ -35,9 +35,14 @@ describe('correlated server diagnostics', () => {
       environment: { NODE_ENV: 'development', BAZAK_SERVER_DIAGNOSTICS: 'summary' }, write,
     });
     reporter.request('Find perfume for api_key=private-value', { hasClarification: false });
+    reporter.decision({
+      stage: 'catalog_boundary', operation: '/products/search', attempt: 1, method: 'GET',
+      pathname: '/products/search', query: { q: 'private shopper search', limit: '20', skip: '0' },
+      status: 200, durationMs: 12, products: [{ id: 7, price: 40 }],
+    });
     reporter.result(result);
 
-    expect(write).toHaveBeenCalledTimes(2);
+    expect(write).toHaveBeenCalledTimes(3);
     const output = write.mock.calls.flat().join('\n');
     expect(output).toContain('bazak_server_diagnostic');
     expect(output).toContain(reporter.traceId);
@@ -50,6 +55,9 @@ describe('correlated server diagnostics', () => {
     expect(output).not.toContain('Private model prose');
     expect(output).not.toContain('Private catalog description');
     expect(output).not.toContain('private-intent');
+    expect(output).not.toContain('private shopper search');
+    expect(output).toContain('"limit":"20"');
+    expect(output).toContain('"length":22');
   });
 
   it('bounds and redacts explicitly enabled development verbose content', () => {

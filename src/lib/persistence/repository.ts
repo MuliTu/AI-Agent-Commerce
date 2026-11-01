@@ -198,6 +198,9 @@ function conversationStateFromRow(row: SqlRow): ConversationMemoryState {
     throw new PersistenceConflictError('Persisted conversation state metadata is inconsistent.');
   }
   if (state.activeResult) orchestrationResultSchema.parse(state.activeResult);
+  if (state.pausedOutcomes) orchestrationResultSchema.parse({
+    turnId: 'paused-state-validation', status: 'completed', response: 'Paused outcomes.', outcomes: state.pausedOutcomes,
+  });
   return state;
 }
 

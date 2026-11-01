@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ConversationExecutionService, PersistedExecutionError, type RunOrchestration } from '../src/lib/execution';
+import { nextConversationMemoryState } from '../src/lib/execution/conversation-context';
 import { CommerceRepository, PersistenceConflictError } from '../src/lib/persistence';
 import type { OrchestrationResult } from '../src/lib/orchestration';
 import { createGetHandler, createPostHandler, POST } from '../src/app/api/orchestrate/route';
@@ -202,6 +203,7 @@ describe('ConversationExecutionService', () => {
         }],
       };
       expect(input.displayedProductReference).toEqual({
+        referenceId: 'displayed:phones:1',
         intentId: 'phones',
         position: 1,
         product: { id: 2, title: 'Phone 2', price: 298, category: 'smartphones' },
@@ -407,6 +409,161 @@ describe('ConversationExecutionService', () => {
       result: clarificationResult,
     });
     repository.close();
+  });
+
+  it('persists paused outcomes across repository recreation and resumes them without duplication', async () => {
+    const path = databasePath();
+    const phoneOutcome = {
+      intent: { id: 'phones', goal: 'Phones', query: 'phones', constraints: { category: 'smartphones' }, status: 'completed' as const },
+      products: [],
+    };
+    const fragranceOutcome = {
+      intent: { id: 'fragrance', goal: 'Fragrance', query: 'fragrance', constraints: { category: 'fragrances' }, status: 'completed' as const },
+      products: [],
+    };
+    const firstRepository = new CommerceRepository(path);
+    const firstService = new ConversationExecutionService(firstRepository, async (input) => input.turnId === 'phone-turn'
+      ? { turnId: input.turnId, status: 'completed', response: 'Phones.', outcomes: [phoneOutcome] }
+      : {
+          turnId: input.turnId, status: 'completed', response: 'Switched.', outcomes: [fragranceOutcome],
+          stateActions: { pauseIntentIds: ['phones'], resumeIntentIds: [] },
+        }, () => '2026-10-28T11:00:00.000Z');
+    await firstService.execute({ conversationId: 'pause-resume', turnId: 'phone-turn', prompt: 'Find phones' });
+    await firstService.execute({ conversationId: 'pause-resume', turnId: 'fragrance-turn', prompt: 'Pause phones and find fragrance' });
+    firstRepository.close();
+
+    const restartedRepository = new CommerceRepository(path);
+    expect(restartedRepository.getConversationState('pause-resume')).toMatchObject({
+      activeResult: { outcomes: [{ intent: { id: 'fragrance' } }] },
+      pausedOutcomes: [{ intent: { id: 'phones' } }],
+    });
+    const restartedService = new ConversationExecutionService(restartedRepository, async (input) => ({
+      turnId: input.turnId, status: 'completed', response: 'Resumed.', outcomes: [phoneOutcome],
+      stateActions: { pauseIntentIds: [], resumeIntentIds: ['phones'] },
+    }), () => '2026-10-28T11:01:00.000Z');
+    await restartedService.execute({ conversationId: 'pause-resume', turnId: 'resume-turn', prompt: 'Resume the phone search' });
+    expect(restartedRepository.getConversationState('pause-resume')).toMatchObject({
+      activeResult: { outcomes: [{ intent: { id: 'fragrance' } }, { intent: { id: 'phones' } }] }, pausedOutcomes: [],
+    });
+    restartedRepository.close();
+  });
+
+  it('does not keep a paused intent active when a combined action ends in clarification', async () => {
+    const path = databasePath();
+    const phoneOutcome = {
+      intent: { id: 'phones', goal: 'Phones', query: 'phones', constraints: { category: 'smartphones' }, status: 'completed' as const },
+      products: [],
+    };
+    const repository = new CommerceRepository(path);
+    const service = new ConversationExecutionService(repository, async (input) => input.turnId === 'initial'
+      ? { turnId: input.turnId, status: 'completed', response: 'Phones.', outcomes: [phoneOutcome] }
+      : {
+          turnId: input.turnId,
+          status: 'partial',
+          response: 'What comparison price should I use?',
+          outcomes: [{
+            ...phoneOutcome,
+            intent: { ...phoneOutcome.intent, status: 'needs_clarification' as const },
+            clarification: {
+              field: 'maxPrice' as const,
+              question: 'What comparison price should I use?',
+              options: ['Under $300', 'Under $400'],
+              reason: 'requested' as const,
+            },
+          }],
+          stateActions: { pauseIntentIds: ['phones'], resumeIntentIds: [] },
+        }, () => '2026-10-28T11:00:00.000Z');
+
+    await service.execute({ conversationId: 'pause-clarify', turnId: 'initial', prompt: 'Find phones' });
+    await service.execute({ conversationId: 'pause-clarify', turnId: 'pause-and-clarify', prompt: 'Pause that and compare another request' });
+
+    const state = repository.getConversationState('pause-clarify');
+    expect(state?.activeResult?.outcomes).toEqual([]);
+    expect(state?.pausedOutcomes).toEqual([phoneOutcome]);
+    expect(state?.currentFocusIntentId).toBeUndefined();
+    repository.close();
+  });
+
+  it('updates paused clarifications in place and resumes clarified outcomes transactionally', async () => {
+    const path = databasePath();
+    const phoneOutcome = {
+      intent: { id: 'phones', goal: 'Phones', query: 'phones', constraints: { category: 'smartphones' }, status: 'completed' as const },
+      products: [],
+    };
+    const fragranceOutcome = {
+      intent: { id: 'fragrance', goal: 'Fragrance', query: 'fragrance', constraints: { category: 'fragrances' }, status: 'completed' as const },
+      products: [],
+    };
+    const clarification = {
+      ...phoneOutcome,
+      intent: { ...phoneOutcome.intent, status: 'needs_clarification' as const },
+      clarification: {
+        field: 'maxPrice' as const, question: 'What comparison price should I use?',
+        options: ['Under $300', 'Under $400'], reason: 'requested' as const,
+      },
+    };
+    const repository = new CommerceRepository(path);
+    const service = new ConversationExecutionService(repository, async (input) => {
+      if (input.turnId === 'initial') return { turnId: input.turnId, status: 'completed' as const, response: 'Phones.', outcomes: [phoneOutcome] };
+      if (input.turnId === 'switch') return {
+        turnId: input.turnId, status: 'completed' as const, response: 'Fragrance.', outcomes: [fragranceOutcome],
+        stateActions: { pauseIntentIds: ['phones'], resumeIntentIds: [] },
+      };
+      return {
+        turnId: input.turnId, status: 'partial' as const, response: clarification.clarification.question,
+        outcomes: [clarification],
+        stateActions: { pauseIntentIds: [], resumeIntentIds: input.turnId === 'resume-clarify' ? ['phones'] : [] },
+      };
+    }, () => '2026-10-28T11:00:00.000Z');
+
+    await service.execute({ conversationId: 'paused-clarification', turnId: 'initial', prompt: 'Find phones' });
+    await service.execute({ conversationId: 'paused-clarification', turnId: 'switch', prompt: 'Pause phones and find fragrance' });
+    await service.execute({ conversationId: 'paused-clarification', turnId: 'clarify-paused', prompt: 'Clarify the paused phone search' });
+    expect(repository.getConversationState('paused-clarification')).toMatchObject({
+      currentFocusIntentId: 'fragrance',
+      activeResult: { outcomes: [{ intent: { id: 'fragrance' } }] },
+      pausedOutcomes: [{ intent: { id: 'phones', status: 'needs_clarification' } }],
+    });
+
+    await service.execute({ conversationId: 'paused-clarification', turnId: 'resume-clarify', prompt: 'Resume and clarify phones' });
+    expect(repository.getConversationState('paused-clarification')).toMatchObject({
+      currentFocusIntentId: 'phones',
+      activeResult: { outcomes: [{ intent: { id: 'fragrance' } }, { intent: { id: 'phones', status: 'needs_clarification' } }] },
+      pausedOutcomes: [],
+    });
+    repository.close();
+  });
+
+  it('applies pause and resume actions without deleting unrelated active intents', () => {
+    const outcome = (id: string) => ({
+      intent: { id, goal: id, query: id, constraints: {}, status: 'completed' as const }, products: [],
+    });
+    const previous = { turnId: 'previous', status: 'completed' as const, response: 'previous', outcomes: [outcome('a'), outcome('c')] };
+    const transition = (result: OrchestrationResult, pausedOutcomes = [outcome('b')]) => nextConversationMemoryState({
+      conversationId: 'state-actions', turnId: result.turnId, completedAt: '2026-10-28T11:00:00.000Z',
+      context: { previous, stateRevision: 1, currentFocusIntentId: 'c', pausedOutcomes }, result,
+    });
+
+    const pauseResume = transition({
+      turnId: 'pause-resume', status: 'completed', response: 'updated', outcomes: [outcome('b')],
+      stateActions: { pauseIntentIds: ['a'], resumeIntentIds: ['b'] },
+    });
+    expect(pauseResume.activeResult?.outcomes.map(({ intent }) => intent.id)).toEqual(['c', 'b']);
+    expect((pauseResume.pausedOutcomes ?? []).map(({ intent }) => intent.id)).toEqual(['a']);
+    expect(pauseResume.currentFocusIntentId).toBe('b');
+
+    const pauseOnly = transition({
+      turnId: 'pause-only', status: 'completed', response: 'paused', outcomes: [],
+      stateActions: { pauseIntentIds: ['a'], resumeIntentIds: [] },
+    });
+    expect(pauseOnly.activeResult?.outcomes.map(({ intent }) => intent.id)).toEqual(['c']);
+
+    const resumeAndSearch = transition({
+      turnId: 'resume-search', status: 'completed', response: 'searched', outcomes: [outcome('d')],
+      stateActions: { pauseIntentIds: [], resumeIntentIds: ['b'] },
+    });
+    expect(resumeAndSearch.activeResult?.outcomes.map(({ intent }) => intent.id)).toEqual(['a', 'c', 'b', 'd']);
+    expect(resumeAndSearch.pausedOutcomes).toEqual([]);
   });
 });
 
