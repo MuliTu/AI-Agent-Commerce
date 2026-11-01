@@ -207,15 +207,32 @@ export class ConversationExecutionService {
       const previous = this.repository.listTurns(input.conversationId)
         .filter(({ id, result: persistedResult }) => id !== input.turnId && persistedResult !== undefined)
         .at(-1)?.result;
+      const completedResults = this.repository.listTurns(input.conversationId)
+        .filter(({ id, result: persistedResult }) => id !== input.turnId && persistedResult !== undefined)
+        .map(({ result: persistedResult }) => persistedResult!);
       const persistedState = this.repository.getConversationState(input.conversationId);
       const context = buildConversationContext({
         prompt: input.prompt,
         persistedState,
         latestCompletedResult: previous,
+        completedResults,
       });
       const observedDecisions: OrchestrationDecisionDiagnostic[] = [];
-      const result = context.displayedProductReference?.selectionOnly
-        ? { ...context.displayedProductReference.result, turnId: input.turnId }
+      const result = context.displayedProductSelection
+        ? { ...context.displayedProductSelection.result, turnId: input.turnId, stateActions: { pauseIntentIds: [], resumeIntentIds: [], selectedProduct: true } }
+        : context.ordinalResolutionIssue
+          ? {
+              turnId: input.turnId,
+              status: 'partial' as const,
+              response: `I do not have a saved displayed result at position ${context.ordinalResolutionIssue.position + 1} for every requested list.`,
+              outcomes: [{
+                intent: { id: `clarify:${input.turnId}`, goal: 'Clarify displayed product selection', query: input.prompt, constraints: {}, status: 'needs_clarification' as const },
+                products: [],
+                clarification: { field: 'query' as const, reason: 'requested' as const, question: 'Should I search for new results or use the current displayed results?', options: ['Search for new results', 'Use the current displayed results'] },
+              }],
+            }
+          : context.displayedProductReference?.selectionOnly
+          ? { ...context.displayedProductReference.result, turnId: input.turnId, stateActions: { pauseIntentIds: [], resumeIntentIds: [], selectedProduct: true } }
         : await this.run({
             ...input,
             previous: context.previous,

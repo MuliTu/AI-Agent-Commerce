@@ -86,6 +86,12 @@ export type ConversationMemoryState = {
   lastTurnId: string;
   updatedAt: string;
   pausedOutcomes?: OrchestrationResult['outcomes'];
+  selectedProducts?: Array<{
+    intentId: string;
+    position: number;
+    product: Product;
+    selectedAtTurnId: string;
+  }>;
 };
 
 export type DecisionEventRecord = {

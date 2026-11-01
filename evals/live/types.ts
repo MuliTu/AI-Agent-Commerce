@@ -27,6 +27,7 @@ export type ObjectiveExpectation = {
   };
   productIdsPrefix?: number[];
   productIdsExact?: number[];
+  errorCodesInclude?: string[];
   semanticEvidence?: {
     required: boolean;
     onlyVerified?: boolean;

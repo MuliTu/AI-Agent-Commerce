@@ -520,8 +520,7 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
           if (new Set(operation.candidateIntentIds).size !== operation.candidateIntentIds.length) {
             throw new OrchestrationError('invalid_plan', 'A clarification cannot repeat an intent candidate.');
           }
-          if ((operation.reason === 'missing_intent_target' || operation.reason === 'ambiguous_budget_scope')
-            && operation.candidateIntentIds.length < 2) {
+          if (operation.reason === 'ambiguous_budget_scope' && operation.candidateIntentIds.length < 2) {
             throw new OrchestrationError('invalid_plan', 'An ambiguous target clarification requires at least two trusted candidates.');
           }
         }
@@ -615,7 +614,9 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
             question,
             options: clarifyOperation.reason === 'missing_price_reference'
               ? ['Choose a displayed product', 'Set a maximum price']
-              : sourceOutcomes.map(({ intent }) => intent.constraints.category ?? intent.goal).slice(0, 8),
+              : sourceOutcomes.length >= 2
+                ? sourceOutcomes.map(({ intent }) => intent.constraints.category ?? intent.goal).slice(0, 8)
+                : [sourceOutcomes[0].intent.constraints.category ?? sourceOutcomes[0].intent.goal, 'Choose another product category'],
             reason: 'requested' as const,
           } } : { clarification: undefined }),
         }));

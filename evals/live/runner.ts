@@ -218,6 +218,8 @@ export async function runLiveEvaluation(input: { scenarios?: EvaluationScenario[
 
   for (const scenario of scenarios) {
       const conversationId = `eval-${runId}-${safeId(scenario.id)}`;
+      const scenarioCatalogHistory: TurnArtifact['catalogCalls'] = [];
+      let scenarioCatalogCaptureComplete = true;
       for (const [index, turn] of scenario.turns.entries()) {
         const turnId = `${conversationId}-${index + 1}-${safeId(turn.id)}`;
         const beforeReader = new CommerceRepository(databasePath);
@@ -243,6 +245,7 @@ export async function runLiveEvaluation(input: { scenarios?: EvaluationScenario[
         const messages = reader.listMessages(conversationId);
         reader.close();
         catalogCalls += captured.calls.length;
+        scenarioCatalogCaptureComplete &&= captured.captureComplete;
         const persistenceRecovered = result !== null
           && persistedTurn?.result !== undefined
           && samePersistedJson(persistedTurn.result, result)
@@ -257,7 +260,7 @@ export async function runLiveEvaluation(input: { scenarios?: EvaluationScenario[
           category: product.category,
         }))) ?? [];
         const objectiveAssertions = result
-          ? evaluateObjectiveAssertions({ turn, result, stateBefore: stateBefore ?? undefined, stateAfter: stateAfter ?? undefined, catalogCalls: captured.calls, catalogCaptureComplete: captured.captureComplete, snapshots, persistenceRecovered })
+          ? evaluateObjectiveAssertions({ turn, result, stateBefore: stateBefore ?? undefined, stateAfter: stateAfter ?? undefined, catalogCalls: captured.calls, priorCatalogCalls: scenarioCatalogHistory, catalogCaptureComplete: scenarioCatalogCaptureComplete, snapshots, persistenceRecovered })
           : [];
         const unavailable = (executionError !== undefined && isUnavailable(executionError))
           || resultContainsUnavailableInfrastructure(result)
@@ -269,6 +272,7 @@ export async function runLiveEvaluation(input: { scenarios?: EvaluationScenario[
             : objectiveAssertions.some(({ status }) => status === 'INCONCLUSIVE')
               ? 'INCONCLUSIVE'
             : 'PASS';
+        scenarioCatalogHistory.push(...captured.calls);
         const durationMs = Math.round(performance.now() - started);
         const baseArtifact = {
           schemaVersion: 1 as const,

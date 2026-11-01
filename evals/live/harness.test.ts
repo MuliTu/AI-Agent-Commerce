@@ -122,6 +122,22 @@ describe('live evaluation harness mechanics', () => {
     expect(assertions.every(({ status }) => status === 'PASS')).toBe(true);
   });
 
+  it('marks historical selection grounding inconclusive when prior catalog capture was incomplete', () => {
+    const product = { id: 121, title: 'Phone', description: '', category: 'smartphones', price: 199, tags: [], images: [] };
+    const assertions = evaluateObjectiveAssertions({
+      turn: { id: 'selection', prompt: 'that phone', expected: { selectedProductFromPreviousDisplay: true } },
+      result: { turnId: 'two', status: 'completed', response: 'Phone', outcomes: [{ intent: { id: 'phones', goal: 'phone', query: 'phone', constraints: { category: 'smartphones' }, status: 'completed' }, products: [{ product, score: 1, matchReasons: [] }] }] },
+      stateAfter: { conversationId: 'c', revision: 2, lastTurnId: 'two', updatedAt: 'now', lastOperation: 'select_product', selectedProducts: [{ intentId: 'phones', position: 1, product, selectedAtTurnId: 'two' }] },
+      catalogCalls: [],
+      priorCatalogCalls: [],
+      catalogCaptureComplete: false,
+      snapshots: [],
+      persistenceRecovered: true,
+    });
+    expect(assertions).toContainEqual(expect.objectContaining({ id: 'catalog-product-grounding', status: 'INCONCLUSIVE' }));
+    expect(assertions).toContainEqual(expect.objectContaining({ id: 'selected-product-from-display', status: 'INCONCLUSIVE' }));
+  });
+
   it('captures exact catalog URL arguments, request occurrences, status, raw output, IDs, and prices', async () => {
     globalThis.fetch = vi.fn(async () => Response.json({
       products: [{ id: 7, title: 'Catalog Phone', price: 42, category: 'smartphones' }],

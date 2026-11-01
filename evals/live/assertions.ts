@@ -8,6 +8,7 @@ type AssertionInput = {
   stateBefore?: ConversationMemoryState;
   stateAfter?: ConversationMemoryState;
   catalogCalls: CatalogBoundaryCall[];
+  priorCatalogCalls?: CatalogBoundaryCall[];
   catalogCaptureComplete: boolean;
   snapshots: ProductSnapshotRecord[];
   persistenceRecovered: boolean;
@@ -55,7 +56,7 @@ export function evaluateObjectiveAssertions(input: AssertionInput): ObjectiveAss
   const products = input.result.outcomes.flatMap(({ products: ranked }) => ranked.map(({ product }) => product));
   const clarifications = input.result.outcomes.filter(({ clarification }) => clarification !== undefined);
   const completed = input.result.outcomes.filter(({ intent }) => intent.status === 'completed');
-  const trustedProducts = rawCatalogProducts(input.catalogCalls);
+  const trustedProducts = rawCatalogProducts([...(input.priorCatalogCalls ?? []), ...input.catalogCalls]);
   const priorProducts = new Map(input.stateBefore?.activeResult?.outcomes.flatMap(({ products: ranked }) =>
     ranked.map(({ product }) => [product.id, product] as const)) ?? []);
   const catalogSearches = input.catalogCalls.filter(isProductSearch);
@@ -106,6 +107,10 @@ export function evaluateObjectiveAssertions(input: AssertionInput): ObjectiveAss
   }
   if (expected.productIdsPrefix) checks.push(check('product-id-prefix', expected.productIdsPrefix.every((id, index) => returnedIds[index] === id), `expected prefix ${expected.productIdsPrefix.join(', ')}, actual ${returnedIds.join(', ')}`));
   if (expected.productIdsExact) checks.push(check('product-ids-exact', sameJson(returnedIds, expected.productIdsExact), `expected ${expected.productIdsExact.join(', ')}, actual ${returnedIds.join(', ')}`));
+  for (const code of expected.errorCodesInclude ?? []) {
+    const actualCodes = input.result.outcomes.flatMap(({ error }) => error ? [error.code] : []);
+    checks.push(check(`error-code-${code}`, actualCodes.includes(code), `expected error code ${code}; actual ${actualCodes.join(', ') || 'none'}`));
+  }
   if (expected.semanticEvidence) {
     const semanticProducts = input.result.outcomes.flatMap(({ products: ranked }) => ranked);
     const complete = semanticProducts.every(({ semanticRelevance }) => semanticRelevance !== undefined);
@@ -150,8 +155,14 @@ export function evaluateObjectiveAssertions(input: AssertionInput): ObjectiveAss
   if (expected.preserveActiveIntentCount) checks.push(check('active-intents-preserved', (input.stateAfter?.activeResult?.outcomes.length ?? 0) >= expected.preserveActiveIntentCount.min, `expected >=${expected.preserveActiveIntentCount.min}, actual ${input.stateAfter?.activeResult?.outcomes.length ?? 0}`));
   if (expected.stateOperation) checks.push(check('state-operation', input.stateAfter?.lastOperation === expected.stateOperation, `expected ${expected.stateOperation}, actual ${input.stateAfter?.lastOperation ?? 'missing'}`));
   if (expected.selectedProductFromPreviousDisplay) {
-    const priorIds = new Set(input.stateBefore?.activeResult?.outcomes.flatMap(({ products: ranked }) => ranked.map(({ product }) => product.id)) ?? []);
-    checks.push(check('selected-product-from-display', products.length === 1 && priorIds.has(products[0]!.id), `expected exactly one previously displayed product; actual IDs ${products.map(({ id }) => id).join(', ')}`));
+    const latestSelected = input.stateAfter?.selectedProducts?.at(-1)?.product;
+    const returned = products.length === 1 ? products[0] : undefined;
+    const priorTrusted = returned ? rawCatalogProducts(input.priorCatalogCalls ?? []).get(returned.id) ?? [] : [];
+    const exactCatalogMatch = returned !== undefined && priorTrusted.some((record) =>
+      Object.entries(returned).every(([key, value]) => sameJson(record[key], value)));
+    checks.push(input.catalogCaptureComplete
+      ? check('selected-product-from-display', returned !== undefined && sameJson(latestSelected, returned) && exactCatalogMatch, `expected latest persisted selection to match the full returned product and prior catalog record; actual IDs ${products.map(({ id }) => id).join(', ')}`)
+      : assertion('selected-product-from-display', 'INCONCLUSIVE', 'Prior catalog capture was incomplete, so historical selection grounding cannot be proven.'));
   }
   if (expected.focusCategory) {
     const focused = input.stateAfter?.activeResult?.outcomes.find(({ intent }) => intent.id === input.stateAfter?.currentFocusIntentId);

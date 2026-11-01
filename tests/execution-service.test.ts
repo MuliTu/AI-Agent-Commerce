@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ConversationExecutionService, PersistedExecutionError, type RunOrchestration } from '../src/lib/execution';
-import { nextConversationMemoryState } from '../src/lib/execution/conversation-context';
+import { buildConversationContext, nextConversationMemoryState } from '../src/lib/execution/conversation-context';
 import { CommerceRepository, PersistenceConflictError } from '../src/lib/persistence';
 import type { OrchestrationResult } from '../src/lib/orchestration';
 import { createGetHandler, createPostHandler, POST } from '../src/app/api/orchestrate/route';
@@ -864,5 +864,133 @@ describe('conversation management route contracts', () => {
       method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'rename', title: ' ' }),
     }));
     expect(invalid.status).toBe(400);
+  });
+});
+
+describe('persisted display-group resolution regressions', () => {
+  const ranked = (id: number, title: string, category: string) => ({
+    product: { id, title, description: '', category, price: id, tags: [], images: [] },
+    score: 1,
+    matchReasons: [],
+  });
+
+  it('resolves a category-qualified ordinal from historical displayed order after a topic switch', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'bazak-display-history-'));
+    const path = join(directory, 'commerce.sqlite');
+    const runner = vi.fn<RunOrchestration>(async ({ turnId, prompt }) => ({
+      turnId,
+      status: 'completed',
+      response: 'Found results.',
+      outcomes: prompt.includes('perfume') ? [{
+        intent: { id: 'perfume', goal: 'Perfume', query: 'perfume', constraints: { category: 'fragrances' }, status: 'completed' },
+        products: [ranked(9, 'Perfume One', 'fragrances'), ranked(10, 'Perfume Two', 'fragrances')],
+      }] : [{
+        intent: { id: 'phones', goal: 'Phones', query: 'phones', constraints: { category: 'smartphones' }, status: 'completed' },
+        products: [ranked(120, 'Phone One', 'smartphones'), ranked(121, 'Phone Two', 'smartphones')],
+      }],
+    }));
+    const first = new CommerceRepository(path);
+    const service = new ConversationExecutionService(first, runner);
+    await service.execute({ conversationId: 'history', turnId: 'one', prompt: 'Find smartphones' });
+    await service.execute({ conversationId: 'history', turnId: 'two', prompt: 'Instead, show me perfume' });
+    first.close();
+
+    const reopened = new CommerceRepository(path);
+    const shouldNotRun = vi.fn<RunOrchestration>();
+    const restored = new ConversationExecutionService(reopened, shouldNotRun);
+    const selected = await restored.execute({ conversationId: 'history', turnId: 'three', prompt: 'In smartphones, show me the second one' });
+    expect(selected.outcomes.flatMap(({ products }) => products.map(({ product }) => product.id))).toEqual([121]);
+    expect(shouldNotRun).not.toHaveBeenCalled();
+    expect(reopened.getConversationState('history')?.selectedProducts?.map(({ product }) => product.id)).toContain(121);
+    reopened.close();
+    const secondReopen = new CommerceRepository(path);
+    const restoredAgain = new ConversationExecutionService(secondReopen, shouldNotRun);
+    const described = await restoredAgain.execute({ conversationId: 'history', turnId: 'four', prompt: 'Tell me more about that phone' });
+    expect(described.outcomes[0].products[0].product.id).toBe(121);
+    expect(shouldNotRun).not.toHaveBeenCalled();
+    secondReopen.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it('selects the same ordinal from every persisted list, or clarifies without a new search when unavailable', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'bazak-multi-display-'));
+    const repository = new CommerceRepository(join(directory, 'commerce.sqlite'));
+    const runner = vi.fn<RunOrchestration>(async ({ turnId }) => ({
+      turnId, status: 'completed', response: 'Found two lists.', outcomes: [{
+        intent: { id: 'phones', goal: 'Phones', query: 'phones', constraints: { category: 'smartphones' }, status: 'completed' },
+        products: [ranked(120, 'P1', 'smartphones'), ranked(121, 'P2', 'smartphones'), ranked(122, 'P3', 'smartphones'), ranked(123, 'P4', 'smartphones')],
+      }, {
+        intent: { id: 'perfume', goal: 'Perfume', query: 'perfume', constraints: { category: 'fragrances' }, status: 'completed' },
+        products: [ranked(9, 'F1', 'fragrances'), ranked(10, 'F2', 'fragrances')],
+      }],
+    }));
+    const service = new ConversationExecutionService(repository, runner);
+    await service.execute({ conversationId: 'both', turnId: 'one', prompt: 'Find phones and perfume' });
+    const seconds = await service.execute({ conversationId: 'both', turnId: 'two', prompt: 'Show the second product from both lists' });
+    expect(seconds.outcomes.flatMap(({ products }) => products.map(({ product }) => product.id))).toEqual([121, 10]);
+    const repeated = await service.execute({ conversationId: 'both', turnId: 'three', prompt: 'Show the second product from both lists' });
+    expect(repeated.outcomes.flatMap(({ products }) => products.map(({ product }) => product.id))).toEqual([121, 10]);
+    const fourths = await service.execute({ conversationId: 'both', turnId: 'four', prompt: 'Show the fourth product from both lists' });
+    expect(fourths.status).toBe('partial');
+    expect(fourths.outcomes[0].clarification?.options).toHaveLength(2);
+    expect(runner).toHaveBeenCalledOnce();
+    repository.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it('does not intercept unrelated anaphora and rejects stale selected-product state', () => {
+    const product = ranked(121, 'Phone Two', 'smartphones').product;
+    const displayed: OrchestrationResult = { turnId: 'one', status: 'completed', response: 'Phones', outcomes: [{
+      intent: { id: 'phones', goal: 'Phones', query: 'phones', constraints: { category: 'smartphones' }, status: 'completed' },
+      products: [ranked(120, 'Phone One', 'smartphones'), { product, score: 1, matchReasons: [] }],
+    }] };
+    const state = { conversationId: 'c', revision: 2, activeResult: displayed, lastOperation: 'select_product' as const, lastTurnId: 'two', updatedAt: 'now', selectedProducts: [{ intentId: 'phones', position: 1, product, selectedAtTurnId: 'two' }] };
+    expect(buildConversationContext({ prompt: 'Find phones like that', persistedState: state, latestCompletedResult: displayed, completedResults: [displayed] }).displayedProductReference).toBeUndefined();
+    const corrupt = { ...state, selectedProducts: [{ ...state.selectedProducts[0], product: { ...product, price: 999 } }] };
+    expect(buildConversationContext({ prompt: 'Tell me more about that phone', persistedState: corrupt, latestCompletedResult: displayed, completedResults: [displayed] }).displayedProductReference).toBeUndefined();
+  });
+
+  it('clarifies duplicate category groups and does not pull inactive history into both', () => {
+    const outcome = (id: string, category: string, productId: number) => ({
+      intent: { id, goal: id, query: id, constraints: { category }, status: 'completed' as const },
+      products: [ranked(productId, id, category), ranked(productId + 1, `${id} two`, category)],
+    });
+    const current: OrchestrationResult = { turnId: 'two', status: 'completed', response: 'Current', outcomes: [outcome('phone-a', 'smartphones', 1), outcome('phone-b', 'smartphones', 10)] };
+    const duplicateState = { conversationId: 'c', revision: 2, activeResult: current, lastOperation: 'add' as const, lastTurnId: 'two', updatedAt: 'now' };
+    const duplicate = buildConversationContext({ prompt: 'In smartphones, show the second one', persistedState: duplicateState, latestCompletedResult: current, completedResults: [current] });
+    expect(duplicate.displayedProductReference).toBeUndefined();
+    expect(duplicate.ordinalResolutionIssue?.reason).toBe('ambiguous_group');
+
+    const old: OrchestrationResult = { turnId: 'one', status: 'completed', response: 'Old', outcomes: [outcome('perfume', 'fragrances', 20)] };
+    const oneActive = { ...duplicateState, activeResult: { turnId: 'three', status: 'completed' as const, response: 'Phone', outcomes: [outcome('phone-a', 'smartphones', 1)] } };
+    const both = buildConversationContext({ prompt: 'Show the second one from both lists', persistedState: oneActive, latestCompletedResult: oneActive.activeResult, completedResults: [old, oneActive.activeResult] });
+    expect(both.displayedProductSelection).toBeUndefined();
+    expect(both.ordinalResolutionIssue?.reason).toBe('ambiguous_group');
+  });
+
+  it('persists the exact product selected from the latest changed display order', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'bazak-changed-order-'));
+    const repository = new CommerceRepository(join(directory, 'commerce.sqlite'));
+    const first = ranked(1, 'One', 'smartphones');
+    const second = ranked(2, 'Two', 'smartphones');
+    const runner = vi.fn<RunOrchestration>(async ({ turnId }) => ({
+      turnId, status: 'completed', response: 'Phones', outcomes: [{
+        intent: { id: 'phones', goal: 'Phones', query: 'phones', constraints: { category: 'smartphones' }, status: 'completed' },
+        products: turnId === 'one' ? [first, second] : [second, first],
+      }],
+    }));
+    const service = new ConversationExecutionService(repository, runner);
+    await service.execute({ conversationId: 'changed', turnId: 'one', prompt: 'Find phones' });
+    await service.execute({ conversationId: 'changed', turnId: 'two', prompt: 'Refine phones' });
+    const selected = await service.execute({ conversationId: 'changed', turnId: 'three', prompt: 'Show me the second one' });
+    expect(selected.outcomes[0].products[0].product.id).toBe(1);
+    expect(repository.getConversationState('changed')?.selectedProducts?.at(-1)?.product).toEqual(first.product);
+    expect(runner).toHaveBeenCalledTimes(2);
+    repository.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it('does not parse ranking language as an ordinal selection', () => {
+    expect(buildConversationContext({ prompt: 'Find a third generation phone', completedResults: [] }).displayedProductReference).toBeUndefined();
   });
 });
