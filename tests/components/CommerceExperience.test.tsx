@@ -28,7 +28,7 @@ describe('CommerceExperience result copy', () => {
     onRetry: () => undefined,
   };
 
-  it('does not render a second refusal below the turn summary', () => {
+  it('renders a scoped catalog-boundary explanation instead of hiding it', () => {
     const result: OrchestrationResult = {
       turnId: 'weather',
       status: 'failed',
@@ -37,13 +37,17 @@ describe('CommerceExperience result copy', () => {
         intent: { id: 'weather:1', goal: 'Answer weather', query: 'weather', constraints: {}, status: 'failed' },
         products: [],
         error: { code: 'outside_product_catalog', message: 'Duplicate refusal', retryable: false },
+      }, {
+        intent: { id: 'fragrance:1', goal: 'Find fragrance', query: 'fragrance', constraints: { category: 'fragrances' }, status: 'completed' },
+        products: [],
       }],
     };
 
     const markup = renderToStaticMarkup(<ResultBlocks result={result} actionable pending={false} retryingIntentId="" selectedClarification="" locale="en" {...callbacks} />);
 
-    expect(markup).not.toContain('Duplicate refusal');
-    expect(markup).not.toContain('unsupported-goal');
+    expect(markup).toContain('Answer weather');
+    expect(markup).toContain('Duplicate refusal');
+    expect(markup).toContain('This part is not supported');
   });
 
   it('describes a zero-match filtered search as a completed empty result', () => {

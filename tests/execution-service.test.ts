@@ -933,7 +933,22 @@ describe('persisted display-group resolution regressions', () => {
     const fourths = await service.execute({ conversationId: 'both', turnId: 'four', prompt: 'Show the fourth product from both lists' });
     expect(fourths.status).toBe('partial');
     expect(fourths.outcomes[0].clarification?.options).toHaveLength(2);
+    expect(fourths.outcomes[0].clarification?.question).toContain('do not have that position');
+    const available = await service.execute({
+      conversationId: 'both', turnId: 'five', prompt: 'Use the lists that have this item',
+      clarification: { intentId: 'clarify:four', field: 'query', value: 'Use the lists that have this item' },
+    });
+    expect(available.outcomes.flatMap(({ products }) => products.map(({ product }) => product.id))).toEqual([123]);
     expect(runner).toHaveBeenCalledOnce();
+    expect(repository.listToolRuns('five')).toEqual([]);
+    const activeBeforeDismiss = repository.getConversationState('both')?.activeResult;
+    await service.execute({ conversationId: 'both', turnId: 'six', prompt: 'Show the fourth product from both lists' });
+    const dismissed = await service.execute({
+      conversationId: 'both', turnId: 'seven', prompt: 'Keep the current displayed results',
+      clarification: { intentId: 'clarify:six', field: 'query', value: 'Keep the current displayed results' },
+    });
+    expect(dismissed.response).toContain('unchanged');
+    expect(repository.getConversationState('both')?.activeResult).toEqual(activeBeforeDismiss);
     repository.close();
     rmSync(directory, { recursive: true, force: true });
   });
@@ -948,6 +963,31 @@ describe('persisted display-group resolution regressions', () => {
     expect(buildConversationContext({ prompt: 'Find phones like that', persistedState: state, latestCompletedResult: displayed, completedResults: [displayed] }).displayedProductReference).toBeUndefined();
     const corrupt = { ...state, selectedProducts: [{ ...state.selectedProducts[0], product: { ...product, price: 999 } }] };
     expect(buildConversationContext({ prompt: 'Tell me more about that phone', persistedState: corrupt, latestCompletedResult: displayed, completedResults: [displayed] }).displayedProductReference).toBeUndefined();
+  });
+
+  it('keeps the active products and focus after a non-mutating unsupported refinement', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'bazak-non-mutating-failure-'));
+    const repository = new CommerceRepository(join(directory, 'commerce.sqlite'));
+    const runner = vi.fn<RunOrchestration>(async ({ turnId }) => turnId === 'one' ? {
+      turnId, status: 'completed', response: 'Phones.', outcomes: [{
+        intent: { id: 'phones', goal: 'Phones under $500', query: 'phones', constraints: { category: 'smartphones', maxPrice: 500 }, status: 'completed' },
+        products: [ranked(1, 'Phone', 'smartphones')],
+      }],
+    } : {
+      turnId, status: 'failed', response: 'Brand exclusion is not supported.', outcomes: [{
+        intent: { id: `${turnId}:constraint`, goal: 'Exclude Apple', query: 'not Apple', constraints: {}, status: 'failed' },
+        products: [], error: { code: 'unsupported_constraint', message: 'Brand exclusion is not supported.', retryable: false },
+      }],
+    });
+    const service = new ConversationExecutionService(repository, runner);
+    await service.execute({ conversationId: 'focus', turnId: 'one', prompt: 'Show phones under $500' });
+    const before = repository.getConversationState('focus');
+    await service.execute({ conversationId: 'focus', turnId: 'two', prompt: 'Keep the budget but exclude Apple' });
+    const after = repository.getConversationState('focus');
+    expect(after?.activeResult).toEqual(before?.activeResult);
+    expect(after?.currentFocusIntentId).toBe('phones');
+    repository.close();
+    rmSync(directory, { recursive: true, force: true });
   });
 
   it('clarifies duplicate category groups and includes distinct historical lists in an explicit both reference', () => {
@@ -966,6 +1006,44 @@ describe('persisted display-group resolution regressions', () => {
     const both = buildConversationContext({ prompt: 'Show the second one from both lists', persistedState: oneActive, latestCompletedResult: oneActive.activeResult, completedResults: [old, oneActive.activeResult] });
     expect(both.displayedProductSelection?.groups.map(({ product }) => product.id)).toEqual([21, 2]);
     expect(both.ordinalResolutionIssue).toBeUndefined();
+  });
+
+  it('persists and resolves a duplicate-list ordinal clarification without calling the model or catalog again', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'bazak-ordinal-choice-'));
+    const path = join(directory, 'commerce.sqlite');
+    const initialRunner = vi.fn<RunOrchestration>(async ({ turnId }) => ({
+      turnId, status: 'completed', response: 'Two phone lists.', outcomes: [
+        { intent: { id: 'budget-300', goal: 'Phones under $300', query: 'phones', constraints: { category: 'smartphones', maxPrice: 300 }, status: 'completed' }, products: [ranked(1, 'A', 'smartphones'), ranked(2, 'B', 'smartphones')] },
+        { intent: { id: 'budget-700', goal: 'Phones under $700', query: 'phones', constraints: { category: 'smartphones', maxPrice: 700 }, status: 'completed' }, products: [ranked(10, 'C', 'smartphones'), ranked(11, 'D', 'smartphones')] },
+      ],
+    }));
+    const repository = new CommerceRepository(path);
+    const service = new ConversationExecutionService(repository, initialRunner);
+    await service.execute({ conversationId: 'duplicate-lists', turnId: 'one', prompt: 'Give me phone lists under $300 and $700' });
+    const clarification = await service.execute({ conversationId: 'duplicate-lists', turnId: 'two', prompt: 'In smartphones, show the second one' });
+    expect(clarification.outcomes[0].clarification?.options).toEqual(expect.arrayContaining([
+      expect.stringContaining('under $300'), expect.stringContaining('under $700'),
+    ]));
+    const selectedLabel = clarification.outcomes[0].clarification!.options.find((option) => option.includes('under $700'))!;
+    repository.close();
+
+    const reopened = new CommerceRepository(path);
+    const shouldNotRun = vi.fn<RunOrchestration>();
+    const restored = new ConversationExecutionService(reopened, shouldNotRun);
+    const selection = await restored.execute({
+      conversationId: 'duplicate-lists', turnId: 'three', prompt: selectedLabel,
+      clarification: { intentId: 'clarify:two', field: 'query', value: selectedLabel },
+    });
+    expect(selection.outcomes.flatMap(({ products }) => products.map(({ product }) => product.id))).toEqual([11]);
+    expect(shouldNotRun).not.toHaveBeenCalled();
+    expect(reopened.listToolRuns('three')).toEqual([]);
+    expect(reopened.getConversationState('duplicate-lists')?.selectedProducts?.at(-1)).toMatchObject({ intentId: 'budget-700', position: 1, product: { id: 11 } });
+    expect(reopened.getConversationState('duplicate-lists')?.activeResult?.stateActions?.pendingDisplayedSelection).toBeUndefined();
+    const described = await restored.execute({ conversationId: 'duplicate-lists', turnId: 'four', prompt: 'Tell me about that selected product' });
+    expect(described.outcomes[0].products[0].product.id).toBe(11);
+    expect(shouldNotRun).not.toHaveBeenCalled();
+    reopened.close();
+    rmSync(directory, { recursive: true, force: true });
   });
 
   it('resolves the exact six-turn topic-switch sequence from persisted display history without another search', async () => {
@@ -1065,6 +1143,99 @@ describe('persisted display-group resolution regressions', () => {
       { category: 'laptops', maxPrice: 100 }, { category: 'fragrances' },
     ]);
     expect(resumedRunner).toHaveBeenCalledOnce();
+    reopened.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it('keeps a contradictory-price repair bound to its saved target across recovery and malformed answers', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'bazak-price-repair-'));
+    const path = join(directory, 'commerce.sqlite');
+    const active: OrchestrationResult = {
+      turnId: 'one', status: 'completed', response: 'Two lists.', outcomes: [
+        { intent: { id: 'laptop', goal: 'Laptops', query: 'laptops', constraints: { category: 'laptops' }, status: 'completed' }, products: [ranked(1, 'Laptop', 'laptops')] },
+        { intent: { id: 'fragrance', goal: 'Fragrances', query: 'fragrances', constraints: { category: 'fragrances' }, status: 'completed' }, products: [ranked(2, 'Perfume', 'fragrances')] },
+      ],
+    };
+    const pending: OrchestrationResult = {
+      turnId: 'two', status: 'partial', response: 'Use one maximum.', outcomes: [{
+        intent: { id: 'two:price-repair', goal: 'Repair the laptops budget', query: 'over 900 under 500', constraints: { category: 'laptops', maxPrice: 500 }, status: 'needs_clarification' },
+        products: [], clarification: { field: 'maxPrice', question: 'Use one maximum.', options: ['Use maximum $500', 'Enter a different maximum price'], reason: 'requested' },
+      }],
+      stateActions: { pauseIntentIds: [], resumeIntentIds: [], preserveActiveResult: true, pendingPriceConstraintRepair: {
+        kind: 'contradictory_price', selectorIntentId: 'two:price-repair', targetIntentId: 'laptop', targetCategory: 'laptops', minPrice: 900, maxPrice: 500,
+      } },
+    };
+    const firstRepository = new CommerceRepository(path);
+    const firstRunner = vi.fn<RunOrchestration>(async ({ turnId }) => turnId === 'one' ? active : pending);
+    const firstService = new ConversationExecutionService(firstRepository, firstRunner);
+    await firstService.execute({ conversationId: 'repair', turnId: 'one', prompt: 'Show laptops and fragrances' });
+    await firstService.execute({ conversationId: 'repair', turnId: 'two', prompt: 'For the laptop only, over $900 but under $500' });
+    firstRepository.close();
+
+    const reopened = new CommerceRepository(path);
+    const resumedRunner = vi.fn<RunOrchestration>(async (input) => {
+      expect(input.prompt).toBe('For laptops, use a maximum price of $500.');
+      expect(input.priceConstraintRepair).toEqual({ targetIntentId: 'laptop', targetCategory: 'laptops', maxPrice: 500 });
+      expect(input.previous?.outcomes.map(({ intent }) => intent.id)).toEqual(['laptop', 'fragrance']);
+      return { turnId: input.turnId, status: 'completed', response: 'Updated laptops only.', outcomes: [
+        { ...active.outcomes[0], intent: { ...active.outcomes[0].intent, constraints: { category: 'laptops', maxPrice: 500 } } },
+        active.outcomes[1],
+      ] };
+    });
+    const restored = new ConversationExecutionService(reopened, resumedRunner);
+    const malformed = await restored.execute({ conversationId: 'repair', turnId: 'three', prompt: 'the.900' });
+    expect(malformed.response).toContain('laptops');
+    expect(malformed.outcomes[0].clarification?.options).toEqual(['Use maximum $500', 'Enter a different maximum price']);
+    expect(resumedRunner).not.toHaveBeenCalled();
+    expect(reopened.getConversationState('repair')?.activeResult?.outcomes.map(({ intent }) => intent.id)).toEqual(['laptop', 'fragrance']);
+
+    const resolved = await restored.execute({
+      conversationId: 'repair', turnId: 'four', prompt: 'Use maximum $500',
+      clarification: { intentId: 'two:price-repair', field: 'maxPrice', value: 'Use maximum $500' },
+    });
+    expect(resolved.response).toBe('Updated laptops only.');
+    expect(resumedRunner).toHaveBeenCalledOnce();
+
+    const confirmationRunner = vi.fn<RunOrchestration>(async (input) => {
+      if (input.turnId.endsWith('-one')) return { ...active, turnId: input.turnId };
+      if (input.turnId.endsWith('-two')) return {
+        ...pending, turnId: input.turnId,
+        outcomes: [{ ...pending.outcomes[0], intent: { ...pending.outcomes[0].intent, id: `${input.turnId}:price-repair` } }],
+        stateActions: { ...pending.stateActions!, pendingPriceConstraintRepair: { ...pending.stateActions!.pendingPriceConstraintRepair!, selectorIntentId: `${input.turnId}:price-repair` } },
+      };
+      expect(input.priceConstraintRepair).toEqual({ targetIntentId: 'laptop', targetCategory: 'laptops', maxPrice: 500 });
+      return { ...active, turnId: input.turnId, response: 'Updated laptops only.' };
+    });
+    const confirmationService = new ConversationExecutionService(reopened, confirmationRunner);
+    const confirmationPrompts = ['Yes, use $500', 'Okay, maximum $500', 'Go with $500', 'כן, $500', '500'];
+    for (const [index, confirmationPrompt] of confirmationPrompts.entries()) {
+      const prefix = `confirmation-${index}`;
+      await confirmationService.execute({ conversationId: prefix, turnId: `${prefix}-one`, prompt: 'Show laptops and fragrances' });
+      await confirmationService.execute({ conversationId: prefix, turnId: `${prefix}-two`, prompt: 'For laptop, over $900 under $500' });
+      const confirmation = await confirmationService.execute({ conversationId: prefix, turnId: `${prefix}-three`, prompt: confirmationPrompt });
+      expect(confirmation.response).toBe('Updated laptops only.');
+    }
+
+    const topicRunner = vi.fn<RunOrchestration>(async (input) => {
+      if (input.turnId.endsWith('-one')) return { ...active, turnId: input.turnId };
+      if (input.turnId.endsWith('-two')) return {
+        ...pending, turnId: input.turnId,
+        outcomes: [{ ...pending.outcomes[0], intent: { ...pending.outcomes[0].intent, id: `${input.turnId}:price-repair` } }],
+        stateActions: { ...pending.stateActions!, pendingPriceConstraintRepair: { ...pending.stateActions!.pendingPriceConstraintRepair!, selectorIntentId: `${input.turnId}:price-repair` } },
+      };
+      expect(['Instead, show smartphones under $300', 'Smartphones under $300', 'I want smartphones under $300', 'עכשיו סמארטפונים עד $300']).toContain(input.prompt);
+      expect(input.priceConstraintRepair).toBeUndefined();
+      return { turnId: input.turnId, status: 'completed', response: 'New phones.', outcomes: [] };
+    });
+    const topicService = new ConversationExecutionService(reopened, topicRunner);
+    const topicSwitches = ['Instead, show smartphones under $300', 'Smartphones under $300', 'I want smartphones under $300', 'עכשיו סמארטפונים עד $300'];
+    for (const [index, topicPrompt] of topicSwitches.entries()) {
+      const prefix = `topic-${index}`;
+      await topicService.execute({ conversationId: prefix, turnId: `${prefix}-one`, prompt: 'Show laptops and fragrances' });
+      await topicService.execute({ conversationId: prefix, turnId: `${prefix}-two`, prompt: 'For laptop, over $900 under $500' });
+      await topicService.execute({ conversationId: prefix, turnId: `${prefix}-three`, prompt: topicPrompt });
+    }
+    expect(topicRunner).toHaveBeenCalledTimes(topicSwitches.length * 3);
     reopened.close();
     rmSync(directory, { recursive: true, force: true });
   });

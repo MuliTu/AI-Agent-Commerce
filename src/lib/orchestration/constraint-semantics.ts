@@ -59,7 +59,29 @@ function hasUnscopedTrailingBudget(prompt: string, availableCategories: readonly
     .map((segment) => segment.trim())
     .filter(Boolean);
   const budgetPattern = /(?:\b(?:under|below|less\s+than|no\s+more\s+than|at\s+most|maximum|max|ceiling|budget(?:\s+of)?)\b|עד|פחות\s+מ|מקסימום|תקציב(?:\s+של)?)\s*\$?\s*[0-9]+(?:\.[0-9]+)?(?:\s*(?:USD|dollars?|דולר(?:ים)?))?/iu;
-  if ([...prompt.matchAll(new RegExp(budgetPattern.source, 'giu'))].length !== 1) return false;
+  const explicitBudget = /(?:[$₪€£]\s*[0-9]+|[0-9]+(?:\.[0-9]+)?\s*(?:USD|dollars?|ILS|NIS|shekels?|ש(?:"|״)?ח|דולר(?:ים)?))/iu;
+  const budgetCount = [...prompt.matchAll(new RegExp(budgetPattern.source, 'giu'))].length;
+  const explicitAmountCount = [...prompt.matchAll(new RegExp(explicitBudget.source, 'giu'))].length;
+  // Separate category segments with their own currency amounts are scoped by
+  // construction. Do not turn the final supported budget into a global
+  // ambiguity merely because another segment uses an unsupported currency.
+  if (explicitAmountCount > 1) {
+    const amountSegments = segments.filter((segment) => explicitBudget.test(segment));
+    const scopedCategories = amountSegments.flatMap((segment) => {
+      const amountCount = [...segment.matchAll(new RegExp(explicitBudget.source, 'giu'))].length;
+      const category = amountCount === 1 ? resolveCatalogCategory(undefined, segment, availableCategories) : undefined;
+      return category ? [category] : [];
+    });
+    const oneAmountPerSegment = amountSegments.length === explicitAmountCount
+      && amountSegments.every((segment) => [...segment.matchAll(new RegExp(explicitBudget.source, 'giu'))].length === 1);
+    const eachAmountHasTargetText = amountSegments.every((segment) => segment
+      .replace(new RegExp(explicitBudget.source, 'giu'), ' ')
+      .replace(/\b(?:under|below|budget|budgets|of|for|the|a|an)\b/giu, ' ')
+      .match(/[\p{L}\p{N}]+/gu));
+    return !oneAmountPerSegment || !eachAmountHasTargetText
+      || new Set(scopedCategories).size !== scopedCategories.length;
+  }
+  if (budgetCount !== 1) return false;
   const budgetSegments = segments.flatMap((segment, index) => budgetPattern.test(segment) ? [index] : []);
   if (budgetSegments.length !== 1 || budgetSegments[0] !== segments.length - 1) return false;
 

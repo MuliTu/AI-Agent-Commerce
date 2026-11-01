@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CatalogError, type CatalogPage } from '../../src/lib/catalog';
 import type { Product } from '../../src/lib/domain/contracts';
-import { createIntentOrchestrator, OrchestrationError } from '../../src/lib/orchestration';
+import { createIntentOrchestrator, OrchestrationError, type OrchestrationResult } from '../../src/lib/orchestration';
 
 const phone: Product = {
   id: 1,
@@ -64,6 +64,7 @@ function catalog(search = vi.fn(async ({ query }: { query: string }) =>
     listCategories: vi.fn(async () => [
       { slug: 'smartphones', name: 'Smartphones', url: 'https://dummyjson.com/products/category/smartphones' },
       { slug: 'fragrances', name: 'Fragrances', url: 'https://dummyjson.com/products/category/fragrances' },
+      { slug: 'laptops', name: 'Laptops', url: 'https://dummyjson.com/products/category/laptops' },
       { slug: 'mobile-accessories', name: 'Mobile Accessories', url: 'https://dummyjson.com/products/category/mobile-accessories' },
       { slug: 'mens-shoes', name: 'Mens Shoes', url: 'https://dummyjson.com/products/category/mens-shoes' },
       { slug: 'kitchen-accessories', name: 'Kitchen Accessories', url: 'https://dummyjson.com/products/category/kitchen-accessories' },
@@ -572,31 +573,75 @@ describe('single-agent multi-intent orchestration', () => {
     expect(result.outcomes[1].products.map(({ product }) => product.id)).toEqual([4, 3]);
   });
 
-  it('scopes an unsupported ILS budget without harming an independent perfume intent', async () => {
+  it('scopes an unsupported ILS budget without harming an independently budgeted perfume intent', async () => {
     const catalogClient = catalog();
+    catalogClient.listProductsByCategory = vi.fn(async (category: string) => page(
+      category === 'fragrances' ? [{ ...fragrance, price: 55 }] : [],
+    ));
     const orchestrator = createIntentOrchestrator({
       catalog: catalogClient,
       extractIntents: async () => ({
         response: 'I kept the two intents separate.',
         intents: [
-          { goal: 'Find a smartphone', query: 'smartphone', constraints: { maxPrice: 300 } },
-          { goal: 'Find perfume', query: 'perfume', constraints: {} },
+          { goal: 'Find a laptop', query: 'laptop', constraints: { category: 'laptops', maxPrice: 3000 } },
+          { goal: 'Find perfume under $60', query: 'perfume', constraints: { maxPrice: 60 } },
         ],
       }),
     });
 
     const result = await orchestrator.run({
       turnId: 'ils-scope', conversationId: 'conversation-1',
-      prompt: 'iPhone under ₪300 and perfume',
+      prompt: 'Find a laptop under ₪3,000 and a fragrance under $60',
     });
 
-    expect(result.status).toBe('partial');
+    expect(result.status, JSON.stringify(result)).toBe('partial');
     expect(result.outcomes[0]).toMatchObject({
       intent: { status: 'failed' },
       error: { code: 'unsupported_currency', message: expect.stringMatching(/USD.*conversion/i) },
     });
     expect(result.outcomes[0].intent.constraints.maxPrice).toBeUndefined();
-    expect(result.outcomes[1]).toMatchObject({ intent: { status: 'completed' }, products: [{ product: { id: 2 } }] });
+    expect(result.outcomes[1]).toMatchObject({ intent: { status: 'completed', constraints: { category: 'fragrances', maxPrice: 60 } }, products: [{ product: { id: 2 } }] });
+    expect(result.outcomes[1].products.every(({ product }) => product.price <= 60)).toBe(true);
+    expect(catalogClient.listProductsByCategory).toHaveBeenCalledTimes(1);
+    expect(catalogClient.listProductsByCategory).toHaveBeenCalledWith('fragrances', expect.any(Object));
+    expect(result.stateActions?.pendingBudgetClarification).toBeUndefined();
+  });
+
+  it('persists a target-bound repair for contradictory prices on one existing intent', async () => {
+    const extractIntents = vi.fn(async () => ({ response: 'unused', intents: [] }));
+    const previous: OrchestrationResult = {
+      turnId: 'before', status: 'completed', response: 'Two lists.', outcomes: [
+        { intent: { id: 'laptop', goal: 'Laptops', query: 'laptop', constraints: { category: 'laptops' }, status: 'completed' }, products: [] },
+        { intent: { id: 'fragrance', goal: 'Fragrances', query: 'fragrance', constraints: { category: 'fragrances' }, status: 'completed' }, products: [] },
+      ],
+    };
+    const result = await createIntentOrchestrator({ catalog: catalog(), extractIntents }).run({
+      turnId: 'repair', conversationId: 'conversation-1',
+      prompt: 'For the laptop only, make it over $900 but under $500', previous,
+    });
+    expect(result).toMatchObject({
+      status: 'partial',
+      outcomes: [{ intent: { status: 'needs_clarification', constraints: { category: 'laptops', maxPrice: 500 } } }],
+      stateActions: { preserveActiveResult: true, pendingPriceConstraintRepair: {
+        targetIntentId: 'laptop', targetCategory: 'laptops', minPrice: 900, maxPrice: 500,
+      } },
+    });
+    expect(extractIntents).not.toHaveBeenCalled();
+
+    const ambiguous = await createIntentOrchestrator({ catalog: catalog(), extractIntents }).run({
+      turnId: 'ambiguous-repair', conversationId: 'conversation-1',
+      prompt: 'Make it over $900 but under $500', previous,
+    });
+    expect(ambiguous.status).toBe('failed');
+    expect(ambiguous.stateActions?.pendingPriceConstraintRepair).toBeUndefined();
+
+    const resolved = await createIntentOrchestrator({ catalog: catalog(), extractIntents }).run({
+      turnId: 'resolve-repair', conversationId: 'conversation-1', prompt: 'Use maximum $500', previous,
+      priceConstraintRepair: { targetIntentId: 'laptop', targetCategory: 'laptops', maxPrice: 500 },
+    });
+    expect(resolved.outcomes.find(({ intent }) => intent.id === 'laptop')?.intent.constraints).toMatchObject({ category: 'laptops', maxPrice: 500 });
+    expect(resolved.outcomes.find(({ intent }) => intent.id === 'fragrance')).toEqual(previous.outcomes[1]);
+    expect(extractIntents).not.toHaveBeenCalled();
   });
 
   it('derives cheap ordering and removes a model-invented budget deterministically', async () => {

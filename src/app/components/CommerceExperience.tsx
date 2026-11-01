@@ -91,7 +91,9 @@ export function ResultBlocks({ result, actionable, pending, retryingIntentId, se
         if (outcome.error?.code === 'outside_product_catalog'
           || outcome.error?.code === 'unknown_catalog_category'
           || outcome.error?.code === 'unsupported_constraint') {
-          return null;
+          return <IntentSection key={outcome.intent.id} summary={outcome.intent.goal} status="failed" grouped={grouped} locale={locale}>
+            <RecommendationState state="failure" title={isHebrew ? 'לא ניתן לבצע את החלק הזה' : 'This part is not supported'} description={grouped ? outcome.error.message : result.response} />
+          </IntentSection>;
         }
         const retrying = actionable && retryingIntentId === outcome.intent.id;
         return <IntentSection key={outcome.intent.id} summary={isHebrew ? (grouped ? 'שאר תוצאות החיפוש נשארות זמינות.' : 'שמרתי את הבקשה ללא שינוי כדי שאפשר יהיה לנסות שוב.') : (grouped ? 'Your other shopping goals are still available.' : 'I kept your request unchanged so you can try again.')} status="failed" grouped={grouped} locale={locale}>
@@ -115,6 +117,14 @@ export function ResultBlocks({ result, actionable, pending, retryingIntentId, se
       return <IntentSection key={outcome.intent.id} summary={summary} status="completed" grouped={grouped} locale={locale}><PaginatedProductResults outcome={outcome} locale={locale} /></IntentSection>;
     })}
   </div>;
+}
+
+function hasRedundantSingleFailureSummary(result: OrchestrationResult): boolean {
+  const [outcome] = result.outcomes;
+  return result.outcomes.length === 1
+    && outcome?.intent.status === 'failed'
+    && (outcome.error?.message.trim() === result.response.trim()
+      || ['outside_product_catalog', 'unknown_catalog_category', 'unsupported_constraint'].includes(outcome.error?.code ?? ''));
 }
 
 const PRODUCT_BATCH_SIZE = 5;
@@ -476,7 +486,7 @@ export function CommerceExperience({
                     <RecommendationState state="failure" title={entry.locale === 'he' ? 'לא הצלחתי להשלים את החיפוש' : 'I couldn’t finish this search'} description={entry.failure} />
                   </ConversationMessage>}
                   {entry.result && <ConversationMessage role="assistant" locale={entry.locale}>
-                    <p className="assistant-summary">{entry.result.response}</p>
+                    {!hasRedundantSingleFailureSummary(entry.result) && <p className="assistant-summary">{entry.result.response}</p>}
                     <ResultBlocks
                       result={entry.result}
                       actionable={index === entries.length - 1}

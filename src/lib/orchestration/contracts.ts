@@ -185,6 +185,32 @@ const pendingBudgetClarificationSchema = z.object({
 
 export type PendingBudgetClarification = z.infer<typeof pendingBudgetClarificationSchema>;
 
+const pendingDisplayedSelectionSchema = z.object({
+  kind: z.literal('displayed_ordinal_selection'),
+  selectorIntentId: z.string().trim().min(1),
+  position: z.number().int().nonnegative(),
+  mode: z.enum(['choose_group', 'use_available_groups']),
+  sourceRevision: z.number().int().nonnegative(),
+  candidates: z.array(z.object({
+    groupRef: z.string().trim().min(1),
+    label: z.string().trim().min(1),
+    hasPosition: z.boolean(),
+  }).strict()).min(1),
+}).strict();
+
+export type PendingDisplayedSelection = z.infer<typeof pendingDisplayedSelectionSchema>;
+
+const pendingPriceConstraintRepairSchema = z.object({
+  kind: z.literal('contradictory_price'),
+  selectorIntentId: z.string().trim().min(1),
+  targetIntentId: z.string().trim().min(1),
+  targetCategory: z.string().trim().min(1),
+  minPrice: z.number().nonnegative(),
+  maxPrice: z.number().nonnegative(),
+}).strict();
+
+export type PendingPriceConstraintRepair = z.infer<typeof pendingPriceConstraintRepairSchema>;
+
 export const orchestrationResultSchema = z.object({
   turnId: z.string().trim().min(1),
   status: z.enum(['queued', 'running', 'completed', 'partial', 'failed']),
@@ -215,7 +241,15 @@ export const orchestrationResultSchema = z.object({
     pauseIntentIds: z.array(z.string().trim().min(1)).default([]),
     resumeIntentIds: z.array(z.string().trim().min(1)).default([]),
     selectedProduct: z.boolean().optional(),
+    preserveActiveResult: z.boolean().optional(),
+    resolvedDisplayedSelection: z.array(z.object({
+      intentId: z.string().trim().min(1),
+      position: z.number().int().nonnegative(),
+      product: productSchema,
+    }).strict()).optional(),
     pendingBudgetClarification: pendingBudgetClarificationSchema.optional(),
+    pendingDisplayedSelection: pendingDisplayedSelectionSchema.optional(),
+    pendingPriceConstraintRepair: pendingPriceConstraintRepairSchema.optional(),
   }).strict().optional(),
 }).strict();
 
@@ -244,7 +278,11 @@ export type OrchestrationResult = {
     pauseIntentIds: string[];
     resumeIntentIds: string[];
     selectedProduct?: boolean;
+    preserveActiveResult?: boolean;
+    resolvedDisplayedSelection?: Array<{ intentId: string; position: number; product: Product }>;
     pendingBudgetClarification?: PendingBudgetClarification;
+    pendingDisplayedSelection?: PendingDisplayedSelection;
+    pendingPriceConstraintRepair?: PendingPriceConstraintRepair;
   };
 };
 

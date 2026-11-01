@@ -100,23 +100,23 @@ Before running, record the exact commit, provider/model, isolated DB, scenario c
 
 You can say:
 
-- “Merged main passed 418 Vitest tests, 11 harness tests, production build, 35 Playwright tests, and GitHub CI.”
+- “The reviewed candidate passed 424 Vitest tests, 11 harness tests, production build, and 35 Playwright tests.”
 - “The full live sample passed 27 of 30 turns.”
 - “The five-scenario real-browser sample passed four and found one pending-budget failure.”
-- “A later isolated post-merge execution of that flow passed once.”
+- “Later isolated executions passed the repaired budget flow, including a natural typed confirmation against the real provider and catalog.”
 - “That rerun proves the successful path can work; it does not prove the stochastic divergence is fixed.”
 
 Do not say:
 
 - “The product is 90% reliable.”
 - “All tests passed.”
-- “The pending-budget bug is fixed.”
+- “The product is bug-free.”
 - “The judge is independent.”
 - “Normal Playwright uses the real model.”
 
 ## Known issues to explain honestly
 
-1. The same ambiguous multi-product budget wording produced both a correct pending plan and a generic clarification in real runs. Raw provider-plan diagnostics were incomplete on the failed path.
+1. Earlier ambiguous multi-product budget runs exposed lost target state. The current structured repair passed deterministic and targeted live checks, but the raw provider plan is still not recorded on every failure path.
 2. The terminal assistant sentence can be generic while grounded product cards contain the useful answer. Two judge failures exposed this mismatch.
 3. One scoped camera-phone/fragrance request failed in a service run and passed in a browser sample.
 4. Initial provider/catalog retries do not use one uniform policy.
