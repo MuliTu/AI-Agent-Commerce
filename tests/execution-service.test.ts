@@ -950,7 +950,7 @@ describe('persisted display-group resolution regressions', () => {
     expect(buildConversationContext({ prompt: 'Tell me more about that phone', persistedState: corrupt, latestCompletedResult: displayed, completedResults: [displayed] }).displayedProductReference).toBeUndefined();
   });
 
-  it('clarifies duplicate category groups and does not pull inactive history into both', () => {
+  it('clarifies duplicate category groups and includes distinct historical lists in an explicit both reference', () => {
     const outcome = (id: string, category: string, productId: number) => ({
       intent: { id, goal: id, query: id, constraints: { category }, status: 'completed' as const },
       products: [ranked(productId, id, category), ranked(productId + 1, `${id} two`, category)],
@@ -964,8 +964,82 @@ describe('persisted display-group resolution regressions', () => {
     const old: OrchestrationResult = { turnId: 'one', status: 'completed', response: 'Old', outcomes: [outcome('perfume', 'fragrances', 20)] };
     const oneActive = { ...duplicateState, activeResult: { turnId: 'three', status: 'completed' as const, response: 'Phone', outcomes: [outcome('phone-a', 'smartphones', 1)] } };
     const both = buildConversationContext({ prompt: 'Show the second one from both lists', persistedState: oneActive, latestCompletedResult: oneActive.activeResult, completedResults: [old, oneActive.activeResult] });
-    expect(both.displayedProductSelection).toBeUndefined();
-    expect(both.ordinalResolutionIssue?.reason).toBe('ambiguous_group');
+    expect(both.displayedProductSelection?.groups.map(({ product }) => product.id)).toEqual([21, 2]);
+    expect(both.ordinalResolutionIssue).toBeUndefined();
+  });
+
+  it('resolves the exact six-turn topic-switch sequence from persisted display history without another search', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'bazak-six-turn-history-'));
+    const repository = new CommerceRepository(join(directory, 'commerce.sqlite'));
+    const runner = vi.fn<RunOrchestration>(async ({ turnId }) => {
+      if (turnId === 'one') return {
+        turnId, status: 'completed', response: 'Phones under $300.', outcomes: [{
+          intent: { id: 'phones', goal: 'Phones', query: 'phones', constraints: { category: 'smartphones', maxPrice: 300 }, status: 'completed' },
+          products: [ranked(120, 'Phone One', 'smartphones'), ranked(121, 'Phone Two', 'smartphones'), ranked(122, 'Phone Three', 'smartphones')],
+        }],
+      };
+      if (turnId === 'two') return {
+        turnId, status: 'partial', response: 'What price should I use?', outcomes: [{
+          intent: { id: 'phones', goal: 'Phones', query: 'phones', constraints: { category: 'smartphones', maxPrice: 300 }, status: 'needs_clarification' },
+          products: [], clarification: { field: 'maxPrice', reason: 'requested', question: 'What maximum price?', options: ['$200', '$250'] },
+        }],
+      };
+      if (turnId === 'three') return {
+        turnId, status: 'completed', response: 'Phones under $200.', outcomes: [{
+          intent: { id: 'phones', goal: 'Phones', query: 'phones', constraints: { category: 'smartphones', maxPrice: 200 }, status: 'completed' },
+          products: [ranked(128, 'Realme C35', 'smartphones'), ranked(121, 'iPhone 5s', 'smartphones')],
+        }],
+      };
+      if (turnId === 'four') return {
+        turnId, status: 'completed', response: 'Perfumes under $100.', outcomes: [{
+          intent: { id: 'perfume', goal: 'Perfume', query: 'perfume', constraints: { category: 'fragrances', maxPrice: 100 }, status: 'completed' },
+          products: [ranked(6, 'CK One', 'fragrances'), ranked(9, 'Dolce Shine', 'fragrances'), ranked(8, 'Dior J’adore', 'fragrances'), ranked(10, 'Gucci Bloom', 'fragrances')],
+        }],
+      };
+      throw new Error(`Unexpected orchestration for ${turnId}`);
+    });
+    const service = new ConversationExecutionService(repository, runner);
+    await service.execute({ conversationId: 'manual-sequence', turnId: 'one', prompt: 'Find smartphones under $300' });
+    await service.execute({ conversationId: 'manual-sequence', turnId: 'two', prompt: 'Show me cheaper options' });
+    await service.execute({ conversationId: 'manual-sequence', turnId: 'three', prompt: 'Under $200' });
+    await service.execute({ conversationId: 'manual-sequence', turnId: 'four', prompt: 'Instead, show me a perfume under $100' });
+    const phone = await service.execute({ conversationId: 'manual-sequence', turnId: 'five', prompt: 'In smartphones, tell me about the second one' });
+    expect(phone.outcomes.flatMap(({ products }) => products.map(({ product }) => product.id))).toEqual([121]);
+    const stateBeforeBoth = repository.getConversationState('manual-sequence');
+    const both = await service.execute({ conversationId: 'manual-sequence', turnId: 'six', prompt: 'Show me the second product from each list' });
+    expect(both.outcomes.flatMap(({ products }) => products.map(({ product }) => product.id))).toEqual([121, 9]);
+    expect(runner).toHaveBeenCalledTimes(4);
+    expect(repository.listToolRuns('six')).toEqual([]);
+    const stateAfterBoth = repository.getConversationState('manual-sequence');
+    expect(stateAfterBoth?.activeResult).toEqual(stateBeforeBoth?.activeResult);
+    expect(stateAfterBoth?.pausedOutcomes).toEqual(stateBeforeBoth?.pausedOutcomes);
+    repository.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it('selects from several explicit historical lists and names only lists missing the requested position', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'bazak-several-history-'));
+    const repository = new CommerceRepository(join(directory, 'commerce.sqlite'));
+    const runner = vi.fn<RunOrchestration>(async ({ turnId }) => ({
+      turnId, status: 'completed', response: turnId, outcomes: [{
+        intent: { id: turnId, goal: turnId, query: turnId, constraints: { category: turnId }, status: 'completed' },
+        products: turnId === 'laptops'
+          ? [ranked(1, 'L1', 'laptops')]
+          : [ranked(turnId === 'phones' ? 10 : 20, 'One', turnId), ranked(turnId === 'phones' ? 11 : 21, 'Two', turnId)],
+      }],
+    }));
+    const service = new ConversationExecutionService(repository, runner);
+    await service.execute({ conversationId: 'several', turnId: 'phones', prompt: 'Phones' });
+    await service.execute({ conversationId: 'several', turnId: 'fragrances', prompt: 'Fragrances' });
+    await service.execute({ conversationId: 'several', turnId: 'laptops', prompt: 'Laptops' });
+    const result = await service.execute({ conversationId: 'several', turnId: 'select', prompt: 'Show the second product from each list' });
+    expect(result.status).toBe('partial');
+    expect(result.response).toContain('laptops');
+    expect(result.response).not.toContain('smartphones');
+    expect(runner).toHaveBeenCalledTimes(3);
+    expect(repository.listToolRuns('select')).toEqual([]);
+    repository.close();
+    rmSync(directory, { recursive: true, force: true });
   });
 
   it('persists the exact product selected from the latest changed display order', async () => {
