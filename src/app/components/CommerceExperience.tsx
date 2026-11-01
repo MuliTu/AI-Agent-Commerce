@@ -83,7 +83,7 @@ export function ResultBlocks({ result, actionable, pending, retryingIntentId, se
           return <section className="clarification clarification--completed" aria-label={`Completed clarification for ${outcome.intent.goal}`} key={outcome.intent.id}><p className="intent__status">{isHebrew ? 'ההבהרה הושלמה' : 'Clarification completed'}</p><p><strong>{isHebrew ? 'נבחר:' : 'Selected:'}</strong> {completedChoice}</p></section>;
         }
         if (!clarification) {
-          return <IntentSection key={outcome.intent.id} title={outcome.intent.goal} summary={isHebrew ? 'אחזור לבקשה הזאת אחרי התשובה הנוכחית.' : 'I’ll return to this goal after your current answer.'} status="empty" grouped={grouped} locale={locale}><RecommendationState state="empty" title={isHebrew ? 'צריך עוד פרט אחד' : 'I need one more detail'} description={isHebrew ? 'ענו על השאלה הנוכחית ואז אוכל להמשיך עם הבקשה הזאת.' : 'Answer the current question first, then I can continue with this shopping goal.'} /></IntentSection>;
+          return <IntentSection key={outcome.intent.id} summary={isHebrew ? 'אחזור לבקשה הזאת אחרי התשובה הנוכחית.' : 'I’ll return to this goal after your current answer.'} status="empty" grouped={grouped} locale={locale}><RecommendationState state="empty" title={isHebrew ? 'צריך עוד פרט אחד' : 'I need one more detail'} description={isHebrew ? 'ענו על השאלה הנוכחית ואז אוכל להמשיך עם הבקשה הזאת.' : 'Answer the current question first, then I can continue with this shopping goal.'} /></IntentSection>;
         }
         return <ClarificationPrompt key={outcome.intent.id} name={outcome.intent.id} question={clarificationQuestion(clarification.field, clarification.question, locale)} options={clarification.options} empty={clarification.reason === 'empty'} selected={actionable ? selectedClarification : ''} disabled={!actionable || pending} locale={locale} onSelect={(option) => onClarification(outcome.intent.id, outcome.intent.goal, clarification.field, option)} />;
       }
@@ -94,7 +94,7 @@ export function ResultBlocks({ result, actionable, pending, retryingIntentId, se
           return null;
         }
         const retrying = actionable && retryingIntentId === outcome.intent.id;
-        return <IntentSection key={outcome.intent.id} title={outcome.intent.goal} summary={isHebrew ? (grouped ? 'שאר תוצאות החיפוש נשארות זמינות.' : 'שמרתי את הבקשה ללא שינוי כדי שאפשר יהיה לנסות שוב.') : (grouped ? 'Your other shopping goals are still available.' : 'I kept your request unchanged so you can try again.')} status="failed" grouped={grouped} locale={locale}>
+        return <IntentSection key={outcome.intent.id} summary={isHebrew ? (grouped ? 'שאר תוצאות החיפוש נשארות זמינות.' : 'שמרתי את הבקשה ללא שינוי כדי שאפשר יהיה לנסות שוב.') : (grouped ? 'Your other shopping goals are still available.' : 'I kept your request unchanged so you can try again.')} status="failed" grouped={grouped} locale={locale}>
           <RecommendationState state={retrying ? 'loading' : 'failure'} title={retrying ? (isHebrew ? 'מחפש שוב' : 'Searching again') : (isHebrew ? 'לא הצלחתי לחפש בקטלוג עבור הבקשה הזאת' : 'I couldn’t search the catalog for this goal')} description={isHebrew ? (retrying && grouped ? 'שאר התוצאות יישארו במקום בזמן החיפוש החוזר.' : retrying ? 'אני מנסה שוב לחפש בקטלוג.' : outcome.error?.message ?? 'לא ניתן היה להשלים את החיפוש בקטלוג.') : (retrying && grouped ? 'The other results will stay in place while I try this search again.' : retrying ? 'I’m trying this catalog search again.' : outcome.error?.message ?? 'The catalog search could not be completed.')} />
           {actionable && outcome.error?.retryable && <button className="secondary-action" type="button" disabled={pending} onClick={() => onRetry(outcome.intent.id)}>{isHebrew ? 'נסה שוב' : 'Try this search again'}</button>}
         </IntentSection>;
@@ -105,14 +105,14 @@ export function ResultBlocks({ result, actionable, pending, retryingIntentId, se
         const filterSummary = category && budget !== undefined
           ? (isHebrew ? `${category} עד $${budget}` : `${category} under $${budget}`)
           : category ?? (budget !== undefined ? (isHebrew ? `מוצרים עד $${budget}` : `products under $${budget}`) : '');
-        return <IntentSection key={outcome.intent.id} title={outcome.intent.goal} summary={isHebrew ? 'החיפוש הושלם וכל התנאים שסיפקת נשמרו.' : 'The search completed with every constraint you provided.'} status="empty" grouped={grouped} locale={locale}><RecommendationState state="empty" title={isHebrew ? `אין בקטלוג התאמות${filterSummary ? ` עבור ${filterSummary}` : ''}` : `No catalog products match${filterSummary ? ` ${filterSummary}` : ' these filters'}`} description={isHebrew ? 'אפשר להעלות את התקציב או לשנות תנאי אחר ואחפש שוב.' : 'Try raising the budget or relaxing another filter, and I’ll search again.'} /></IntentSection>;
+        return <IntentSection key={outcome.intent.id} summary={isHebrew ? 'החיפוש הושלם וכל התנאים שסיפקת נשמרו.' : 'The search completed with every constraint you provided.'} status="empty" grouped={grouped} locale={locale}><RecommendationState state="empty" title={isHebrew ? `אין בקטלוג התאמות${filterSummary ? ` עבור ${filterSummary}` : ''}` : `No catalog products match${filterSummary ? ` ${filterSummary}` : ' these filters'}`} description={isHebrew ? 'אפשר להעלות את התקציב או לשנות תנאי אחר ואחפש שוב.' : 'Try raising the budget or relaxing another filter, and I’ll search again.'} /></IntentSection>;
       }
       const summary = outcome.semanticStatus === 'fallback'
         ? (isHebrew ? 'הדירוג הסמנטי לא היה זמין; מוצג סדר קטלוג דטרמיניסטי.' : 'Semantic reranking was unavailable; deterministic catalog order is shown.')
         : outcome.semanticStatus === 'applied'
           ? (isHebrew ? `מצאתי ${outcome.products.length} אפשרויות מוערכות מהקטלוג, מסודרות קודם לפי רמת הראיות ואז לפי ציון הרלוונטיות.${outcome.semanticTruncated ? ' מוצגות רק האפשרויות שנבדקו סמנטית.' : ''}` : `I found ${outcome.products.length} evaluated catalog-backed option${outcome.products.length === 1 ? '' : 's'}, ordered by evidence tier and then AI relevance.${outcome.semanticTruncated ? ' Only semantically evaluated options are shown.' : ''}`)
           : (isHebrew ? `מצאתי ${outcome.products.length} אפשרויות מהקטלוג, לפי מידת ההתאמה.` : `I found ${outcome.products.length} catalog-backed option${outcome.products.length === 1 ? '' : 's'}, ordered by match.`);
-      return <IntentSection key={outcome.intent.id} title={outcome.intent.goal} summary={summary} status="completed" grouped={grouped} locale={locale}><PaginatedProductResults outcome={outcome} locale={locale} /></IntentSection>;
+      return <IntentSection key={outcome.intent.id} summary={summary} status="completed" grouped={grouped} locale={locale}><PaginatedProductResults outcome={outcome} locale={locale} /></IntentSection>;
     })}
   </div>;
 }

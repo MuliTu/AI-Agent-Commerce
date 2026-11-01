@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentBoundaryError } from '../../src/lib/agent/errors';
 import { CatalogError } from '../../src/lib/catalog/errors';
 import {
-  InMemoryIdempotencyRegistry,
   MAX_ATTEMPTS,
   classifyFailure,
   executeWithRetry,
@@ -116,38 +115,5 @@ describe('bounded retry execution', () => {
     await vi.advanceTimersByTimeAsync(1);
     await expect(result).resolves.toBe('recovered');
     expect(operation).toHaveBeenCalledTimes(2);
-  });
-});
-
-describe('in-memory idempotency', () => {
-  it('shares one in-flight and completed result for duplicate keys', async () => {
-    const registry = new InMemoryIdempotencyRegistry();
-    let release!: (value: string) => void;
-    const operation = vi.fn(() => new Promise<string>((resolve) => { release = resolve; }));
-    const first = registry.run('turn-1', operation);
-    const duplicate = registry.run('turn-1', operation);
-    await Promise.resolve();
-    expect(operation).toHaveBeenCalledTimes(1);
-    release('saved-once');
-    await expect(Promise.all([first, duplicate])).resolves.toEqual(['saved-once', 'saved-once']);
-    await expect(registry.run('turn-1', operation)).resolves.toBe('saved-once');
-    expect(operation).toHaveBeenCalledTimes(1);
-  });
-
-  it('removes failed operations so an explicit replay may retry', async () => {
-    const registry = new InMemoryIdempotencyRegistry();
-    const operation = vi.fn()
-      .mockRejectedValueOnce(new Error('failed'))
-      .mockResolvedValueOnce('recovered');
-    await expect(registry.run('turn-2', operation)).rejects.toThrow('failed');
-    await expect(registry.run('turn-2', operation)).resolves.toBe('recovered');
-    expect(operation).toHaveBeenCalledTimes(2);
-  });
-
-  it('rejects empty idempotency keys without invoking work', async () => {
-    const registry = new InMemoryIdempotencyRegistry();
-    const operation = vi.fn().mockResolvedValue('unexpected');
-    await expect(registry.run('   ', operation)).rejects.toThrow('idempotency key is required');
-    expect(operation).not.toHaveBeenCalled();
   });
 });

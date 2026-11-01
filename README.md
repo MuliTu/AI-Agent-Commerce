@@ -42,7 +42,7 @@ The local testing branch also accepts `LLM_PROVIDER=litellm` with an explicitly 
 
 ## What is implemented
 
-- A single shopper-facing agent uses structured model output to extract up to eight independent intents. The live path does **not** let the model call catalog tools directly: application code resolves categories, retrieves candidates, filters, ranks, persists, and renders them deterministically.
+- A single shopper-facing agent uses AI SDK schema-validated structured output to extract up to eight independent intents. In the live path the model does **not** choose or invoke catalog tools: application code resolves categories, invokes DummyJSON, filters, ranks, persists, and renders deterministically.
 - System prompts live in `src/lib/ai/prompts`; shopper text and prior intent state are separate typed data.
 - Explicit USD budgets, rating, stock, brand, category, and ordering constraints are scoped per intent. ILS/NIS/₪ budgets are not treated as USD.
 - Unsupported semantics such as brand exclusion, minimum prices, contradictory bounds, and shared multi-product budgets fail honestly instead of being silently inverted or discarded.
@@ -51,8 +51,6 @@ The local testing branch also accepts `LLM_PROVIDER=litellm` with an explicitly 
 - Conversations, messages, turns, intents, results, and product snapshots are written to SQLite before/after execution. Refresh, a second client using the conversation URL, and the saved-conversation list read that server state.
 - Accepted work continues in the current server process if the browser disconnects. A bounded status poll reconciles a client timeout with the persisted terminal result without submitting the operation twice.
 - Product results render in stable batches of five with independent multi-intent groups, scoped empty/failure states, keyboard-accessible controls, and responsive layouts.
-
-The repository also contains a separate experimental commerce-agent runtime under `src/lib/agent/`. Its schema-validated tool loop is tested, but it is not the live `/api/orchestrate` execution path.
 
 ## Architecture and trade-offs
 
@@ -70,7 +68,7 @@ Category-first retrieval was chosen because phrases such as “phone for photogr
 
 For explicit feature-proof requests, exact catalog evidence is deliberately stricter than general relevance. Curated capabilities can use reviewed synonyms, while an unseen feature uses conservative lexical evidence and returns an honest empty result when the catalog does not establish it. The rejected shortcut was treating semantic similarity as proof: “satellite SOS” may be related to “satellite calling” without proving voice-call support.
 
-The local semantic-evidence experiment adds a model-assisted relevance and evidence stage after deterministic hard filtering. It returns `supported`, `partial`, `contradicted`, or `unknown`, bounded confidence, a relevance score, and exact title/description/tag quotes. Application code verifies every quote. Normal results show verified matches first, related-but-not-verified products next, and unknown products last; contradicted products are removed. “Only verified” requests remain strict. Provider failure or invalid evidence falls back to the existing deterministic behavior. Positive literal catalog evidence can correct a probabilistic contradiction, but bounded negation checks prevent phrases such as “does not support satellite calling” from becoming positive proof.
+The semantic-evidence stage, originally developed on a local experiment branch and now present in the current candidate, adds model-assisted relevance and evidence after deterministic hard filtering. It returns `supported`, `partial`, `contradicted`, or `unknown`, bounded confidence, a relevance score, and exact title/description/tag quotes. Application code verifies every quote. Normal results show verified matches first, related-but-not-verified products next, and unknown products last; contradicted products are removed. “Only verified” requests remain strict. Provider failure or invalid evidence falls back to the existing deterministic behavior. Positive literal catalog evidence can correct a probabilistic contradiction, but bounded negation checks prevent phrases such as “does not support satellite calling” from becoming positive proof.
 
 ```mermaid
 flowchart TD
@@ -108,7 +106,9 @@ Missing optional preferences do not block a known category. The app asks one cla
 
 An additive prompt such as “Also show me perfumes under $100” preserves the prior product topic as a sibling. A later category-free “Show me cheaper options” first asks which active topic to refine, then asks for a maximum price because no product comparison baseline was selected. A named request such as “Show me cheaper perfumes” skips the category question but still asks for that price threshold. The adjective `cheap` continues to request price-ascending ordering without a comparison claim.
 
-Transient provider/catalog retry infrastructure supports five total attempts, but the current live orchestrator applies it only to an explicit retry of a failed intent. Initial provider and catalog operations are not yet uniformly wrapped, and completed executions currently persist an empty `toolRuns` list. Therefore the authored five-attempt/attempt-observability target in `outputs/SPEC.md` is **deferred**, not an employer requirement or a completed feature.
+The shared transient retry primitive supports five total attempts, but the live orchestrator applies it only when the shopper explicitly retries a retryable failed intent. Initial catalog operations are not uniformly wrapped. Structured-plan schema failures use a separate maximum of three generation attempts; the semantic evaluator and judge set SDK retries to zero. Completed catalog operations are persisted as sanitized `tool_runs` with boundary path/query, attempt, status, duration, and bounded product evidence. Therefore five-attempt **initial execution** remains deferred, while catalog-attempt observability is implemented.
+
+### Persistence, full disks, corruption, and cleared storage
 
 SQLite errors fail the request rather than falling back to browser-only state:
 
@@ -130,9 +130,11 @@ npm start
 
 The evidence suite also contrasts explicit proof requirements, unseen feature phrases, positive trusted-text matches, ordinary descriptive browsing, multilingual/multi-intent scoping, and false-positive controls. The latest bounded live report is recorded under `outputs/QA_OPEN_VOCAB_LIVE_RETEST_REPORT_2026-10-31.md`; it is evidence for that sampled provider run, not a guarantee about every future model response.
 
+### End-to-end evaluation
+
 Playwright intercepts `/api/orchestrate` for deterministic browser journeys. That proves UI and recovery behavior, not the configured model provider or live DummyJSON availability. Provider-realistic checks are a separate, explicitly budgeted local review; credentials are not stored in the repository. Tests do not currently prove destructive database corruption recovery, real disk-full behavior, a full accessibility audit, distributed concurrency, or consistent quality across many live model samples.
 
-### Live behavior evaluation
+#### Live behavior evaluation
 
 The opt-in live evaluation layer is deliberately separate from `npm test`, `npm run check`, and Playwright:
 
@@ -148,9 +150,13 @@ Results are `PASS`, `FAIL`, or `INCONCLUSIVE`. Objective failures are immutable 
 
 `npm run test:eval-harness` tests the harness mechanics without making live calls. Scenarios live under `evals/live/scenarios.ts` and cover natural multi-turn refinement, ambiguous interruptions and clarification, topic switches, implicit ordinal references, paraphrases, and adversarial catalog-grounding attempts. This harness was based on commit `2435b86`; each run records the exact evaluated `candidateRevision` separately from that compatibility base, so later behavior changes can be evaluated without modifying product logic.
 
-The authoritative recovered-candidate run evaluated commit `5470d732950a77d44edd0834958d23055fb01b28` with real OpenAI `gpt-5.4-mini` and live DummyJSON. It passed 26/26 turns across 22 scenarios, including the original 23-turn suite plus flight-only, weather-only, and mixed phone/flight cases. This is one stochastic sample, not a general 100% quality claim. Full ignored artifacts and the human-readable report are under `var/evaluations/live-ai/recovery-5470d73-authoritative-final-2026-11-01/`.
+The earlier recovered-candidate run evaluated commit `5470d732950a77d44edd0834958d23055fb01b28` with real OpenAI `gpt-5.4-mini` and live DummyJSON and passed 26/26 turns. It remains historical evidence, not the current authoritative result or a general quality claim.
 
-The temporary uncommitted worktree used during development was lost and could not be recovered byte-for-byte. The current branch is a reviewed reconstruction from the last committed base, durable artifacts, and regression evidence. The final deterministic gate is 428/428 Vitest tests, 11/11 harness-mechanics tests, a successful production build, and 35/35 Playwright tests.
+The latest local service-level run evaluated the dirty correction worktree based on `2aea20966e2c93fd78b6f307250c5c6d00083073` with worktree identity `8915c71ca2c63eb344f20c3e09f26467bec3c61b356957c3b8a85298fe53e9fc`. It passed 27/30 turns across 24 scenarios: two judge-only failures found that the terminal response string was too generic even though grounded product results passed deterministic checks, and one execution failure rejected an explicitly scoped camera-phone/fragrance budget plan. Artifacts are under `var/evaluations/live-ai/full-current-2026-11-01-run-01/`.
+
+A separate real-browser run covered five submission-critical scenarios through the rendered application. Four passed and one failed: after an ambiguous laptop/fragrance budget prompt, selecting `laptops` lost the `$100` constraint and the sibling fragrance request. The explicitly scoped camera-phone/fragrance case passed in that browser sample despite failing in the service run, so the behavior is stochastic and not proven reliable. The browser run also failed to use its requested isolated database and appended five evaluation conversations to an existing manual-QA database; no existing conversations were intentionally changed or deleted. The ignored report is under `var/evaluations/live-ai/browser-final-2026-11-01/`. These failures are open limitations, not resolved claims.
+
+The temporary uncommitted worktree used during development was lost and could not be recovered byte-for-byte. The current candidate is a reviewed reconstruction from the last committed base, durable artifacts, and regression evidence. Its latest deterministic gate recorded 418/418 Vitest tests, 11/11 harness-mechanics tests, a successful production build, and 35/35 mocked-boundary Playwright tests. Those green deterministic gates do not override the live failures described above.
 
 ## Original assignment versus project choices
 
@@ -162,11 +168,9 @@ Cart, checkout, authentication, deployment, and production job infrastructure ar
 
 ## What I would change with another week
 
-> Candidate reflection for the submitter to review and personalize before delivery.
-
 I would first replace process-bound execution and local SQLite with a durable database and queued worker lease, because recovery at the browser’s 30-second boundary exposed how important authoritative job state is. Next I would add fault-injection tests for initial provider/catalog retries and persist every attempt, then run a small labeled relevance set across ambiguous, multi-intent, and empty-result prompts to tune ranking with evidence rather than intuition. Finally, I would run a full keyboard/screen-reader audit and add deployment-specific storage and observability checks. I would keep the catalog-first trust boundary and typed React rendering: those constraints prevented fabricated products even when the prompt asked for one.
 
-For semantic evidence, I would evaluate a separate model-assisted judge only after building a labelled set of supported, contradicted, and unknown claims. The judge would return exact catalog spans and confidence, but confidence or similarity alone would never count as proof. OpenAI and the existing local LiteLLM/Ollama-compatible route are both viable evaluation backends; the deterministic lexical gate remains the safe baseline and fallback.
+For semantic evidence, I would build a labelled set of supported, contradicted, and unknown claims and calibrate the existing evaluation judge against it, preferably with an explicitly configured model different from the application model. Judge confidence or similarity would still never count as product proof. OpenAI and the existing LiteLLM/Ollama-compatible development route are viable evaluation backends, but only the explicitly recorded configured provider/model is evidence for a run; the deterministic lexical gate remains the safe baseline and fallback.
 
 ## Conventions
 

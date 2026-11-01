@@ -17,9 +17,11 @@ export type ObjectiveExpectation = {
   catalogSearches?: 'required' | 'forbidden' | 'allowed';
   categoriesInclude?: string[];
   maxPriceAtMost?: number;
+  categoryMaxPrice?: Array<{ category: string; value: number | null }>;
   preserveActiveIntentCount?: { min: number };
   stateOperation?: 'add' | 'replace' | 'refine' | 'clarify' | 'select_product';
   selectedProductFromPreviousDisplay?: boolean;
+  selectedProductsFromPreviousDisplay?: { min: number };
   focusCategory?: string;
   activeCategoriesExclude?: string[];
   comparativeAffordability?: {
@@ -40,6 +42,7 @@ export type ObjectiveExpectation = {
 export type EvaluationTurn = {
   id: string;
   prompt: string;
+  clarification?: { target: 'first_pending'; value: string };
   expected: ObjectiveExpectation;
 };
 

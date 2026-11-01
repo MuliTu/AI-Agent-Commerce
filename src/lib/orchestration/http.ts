@@ -66,5 +66,3 @@ export const conversationMutationSchema = z.discriminatedUnion('action', [
 
 export type ConversationState = z.infer<typeof conversationStateSchema>;
 export type ConversationSummary = z.infer<typeof conversationSummarySchema>;
-
-export type OrchestrationResponse = z.infer<typeof orchestrationResponseSchema>;

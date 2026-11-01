@@ -1,5 +1,7 @@
 # Bazak AI Agent Commerce — Delivery Plan
 
+This file preserves the staged plan and later implementation slices. Items under **Work** are historical targets, not automatic completion claims. The current implementation status is defined by `README.md`, `SPEC.md`, the decision log, and executed test evidence.
+
 ## Planning principles
 
 The plan prioritizes a demonstrable vertical slice, then correctness, then resilience and polish. It is staged to finish before **November 1, 2026 at 23:59 (Asia/Jerusalem)** and intentionally leaves contingency time.
@@ -45,10 +47,10 @@ No phase below should be reported as complete until its exit checks pass.
 ### Work
 
 - Integrate the Vercel AI SDK and GPT-5.4-mini.
-- Define schema-validated tools and structured intent extraction.
+- Define schema-validated structured intent extraction and application-owned catalog boundaries. The earlier unconnected AI SDK model tool-loop prototype was removed after reachability review.
 - Support multiple intents in one turn with per-intent state.
 - Add adaptive clarification logic.
-- Stream conversational text/status while keeping product payloads typed and trusted.
+- Return typed conversational status/results while keeping product payloads trusted. Token streaming was planned but is not implemented by the current JSON `/api/orchestrate` route.
 - Render separate intent sections and partial results.
 
 ### Exit checks
@@ -64,7 +66,7 @@ No phase below should be reported as complete until its exit checks pass.
 
 - Add SQLite migrations and repositories for conversations, messages, turns, intents, and tool runs.
 - Assign stable conversation and turn IDs.
-- Separate accepted server work from the browser stream.
+- Separate accepted server work from the browser request lifecycle.
 - Add status reads/polling or reconnection so a new client can recover persisted results.
 - Detect stale `running` turns at startup and transition or safely retry them according to a documented policy.
 - Document the deployment-storage limitation explicitly.
@@ -81,16 +83,16 @@ No phase below should be reported as complete until its exit checks pass.
 ### Work
 
 - Add a shared transient-error classifier.
-- Implement capped exponential backoff with jitter and **five total attempts**.
+- Implement capped exponential backoff with jitter and **five total attempts** for explicit failed-intent retries. Uniform initial-call retry remains deferred.
 - Add idempotency protection and attempt records.
 - Cover domain logic with Vitest.
 - Mock the catalog and provider boundaries with MSW.
 - Add Playwright paths for primary, clarification, multi-intent, reconnect, empty, and error journeys.
-- Run local agent/evaluation cases with Ollama, then a smaller provider-realistic suite with OpenAI.
+- Optionally run local-compatible development comparisons, then run the bounded provider-realistic suite with the explicitly configured assignment provider.
 
 ### Exit checks
 
-- The retry suite proves exactly five total attempts, not five retries after the initial attempt.
+- The explicit failed-intent retry suite proves exactly five total attempts, not five retries after the initial attempt; initial-call parity remains deferred.
 - Permanent failures are not retried.
 - Automated tests cover partial success and stale execution recovery.
 - Provider-dependent tests are tagged, budget-bounded, and not required for every offline unit run.
@@ -140,7 +142,7 @@ Any omitted or simplified item must be described plainly in the README.
 |---|---|---|
 | Catalog | Supplied OpenAPI contract | Typed client, normalized fixtures, filters |
 | Ranking | Normalized catalog | Ranked candidates and explanations |
-| Agent | Types, catalog tools | Multi-intent orchestration and clarification |
+| Agent/orchestrator | Structured model plan, trusted catalog client | Multi-intent orchestration and clarification; application-owned catalog invocation |
 | UI | Typed agent events/results | Composable conversational product experience |
 | Persistence | Domain model | SQLite schema, repositories, reconnect state |
 | Reliability | Provider/catalog boundaries | Retry and partial-failure handling |
@@ -183,9 +185,9 @@ Execute the five bounded tasks in `QA_REMEDIATION_TASKS_2026-10-30.md`, integrat
 6. Verify deterministic unit/integration/browser gates and run bounded independent live matrices with positive, negative, unseen-feature, and regression controls.
 7. Record the final sampled provider evidence without claiming universal semantic coverage.
 
-## Local semantic-evidence experiment (separate branch, not submission baseline)
+## Semantic-evidence implementation history
 
-**Status (October 31):** Active on local-only branch `local/semantic-evidence-shadow`, based on verified baseline commit `828f4e8`. Direction changed from observation-only to a user-visible evidence-tier reranker using the existing assignment OpenAI configuration. The branch must not be pushed, merged, or deployed without a separate decision.
+**History:** This work began on local-only branch `local/semantic-evidence-shadow`, based on `828f4e8`, and changed from observation-only to a visible evidence-tier reranker. It was later integrated into the current candidate. The branch restriction described the original development stage, not the current repository status.
 
 1. Add a provider-neutral semantic evaluator interface and strict structured result schema: product ID, requirement, `supported | partial | contradicted | unknown`, confidence, relevance score, and exact catalog evidence.
 2. Insert the experiment after deterministic hard filtering and before final soft ranking. Never let the evaluator restore a product removed by price, stock, rating, category, or brand constraints.

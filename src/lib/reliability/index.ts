@@ -1,4 +1,3 @@
-export { InMemoryIdempotencyRegistry } from './idempotency';
 export {
   MAX_ATTEMPTS,
   classifyFailure,

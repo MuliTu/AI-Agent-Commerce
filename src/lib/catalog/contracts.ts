@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { productSchema, type Product } from '../domain/contracts';
+import { productSchema } from '../domain/contracts';
 
 export const catalogCategorySchema = z.object({
   slug: z.string().min(1),
@@ -34,5 +34,3 @@ export type ListProductsQuery = PaginationQuery & {
 export type SearchProductsQuery = PaginationQuery & {
   query: string;
 };
-
-export type CatalogProduct = Product;

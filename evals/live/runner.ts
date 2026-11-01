@@ -231,7 +231,25 @@ export async function runLiveEvaluation(input: { scenarios?: EvaluationScenario[
         const service = new ConversationExecutionService(executionRepository, runLiveOrchestration);
         const serviceRecreatedForTurn = previousService === undefined || previousService !== service;
         previousService = service;
-        const captured = await withCatalogCapture(() => service.execute({ conversationId, turnId, prompt: turn.prompt }));
+        const pendingClarification = turn.clarification?.target === 'first_pending'
+          ? stateBefore?.activeResult?.outcomes.find(({ clarification }) => clarification !== undefined)
+          : undefined;
+        const clarification = turn.clarification && pendingClarification?.clarification
+          ? {
+              intentId: pendingClarification.intent.id,
+              field: pendingClarification.clarification.field,
+              value: turn.clarification.value,
+            }
+          : undefined;
+        if (turn.clarification && !clarification) {
+          throw new Error(`Live evaluation turn ${turn.id} expected a persisted pending clarification.`);
+        }
+        const captured = await withCatalogCapture(() => service.execute({
+          conversationId,
+          turnId,
+          prompt: turn.prompt,
+          ...(clarification ? { clarification } : {}),
+        }));
         executionRepository.close();
         const result = captured.result ?? null;
         let executionError = captured.error;

@@ -4,7 +4,7 @@
 
 Verify that the intended application is catalog-grounded, handles multiple shopping intents coherently, clarifies only when useful, renders trusted product UI, persists state server-side, recovers from client disconnects, and fails predictably.
 
-This is a planned verification strategy; it does not assert that these tests or features already exist.
+This document combines the original verification plan with the current regression contract. A bullet is not proof of execution; current executed counts and live artifacts are reported in `README.md` and run outputs. The removed, never-wired model-directed tool-loop prototype is not part of the current test contract.
 
 ## 2. Test layers
 
@@ -13,7 +13,7 @@ This is a planned verification strategy; it does not assert that these tests or 
 | Unit | Vitest | Parsing, filtering, ranking, state transitions, retry classification |
 | Integration | Vitest + MSW | Catalog/provider boundaries, persistence repositories, orchestration events |
 | Browser | Playwright | Full shopper journeys, UI states, refresh/reconnect, accessibility smoke |
-| Local model evaluation | Ollama | Cheap repeatable intent/clarification exercises without hosted-provider dependence |
+| Optional local-compatible model evaluation | LiteLLM/Ollama-compatible endpoint | Development comparison only; not target-provider evidence |
 | Target-provider evaluation | OpenAI / GPT-5.4-mini | Validate the actual model integration and behavioral rubric |
 
 ## 3. Unit tests with Vitest
@@ -66,8 +66,9 @@ This is a planned verification strategy; it does not assert that these tests or 
 ### Retry policy
 
 - Success on attempt 1 performs exactly one call.
-- Four transient failures followed by success perform exactly five total calls.
-- Five transient failures stop after exactly five total calls.
+- On an explicit retry of a retryable failed intent, four transient failures followed by success perform exactly five total calls.
+- On that explicit retry path, five transient failures stop after exactly five total calls.
+- Initial provider/catalog calls are not claimed to have this policy. Structured-plan schema repair is a separate maximum of three attempts.
 - A permanent 4xx, schema error, or authentication error performs one call.
 - Backoff is capped and jitter is injectable/deterministic under test.
 - Repeating a turn/tool operation uses the same idempotency key where required.
@@ -95,13 +96,12 @@ Mock network boundaries rather than internal implementation details.
 
 ### Model/provider boundary
 
-- Valid single-intent tool call
+- Valid single-intent structured plan
 - Valid multi-intent structured output
 - Clarification response without a catalog call
-- Invalid tool arguments rejected by schema validation
+- Invalid structured-plan fields rejected by schema validation
 - Unknown product ID rejected before rendering
-- Tool-call loop bounded by a maximum step count
-- Provider timeout/rate limit follows the five-total-attempt policy
+- Initial provider timeout/rate-limit handling fails honestly; five-total-attempt behavior is asserted only for the explicit failed-intent retry path.
 
 ### SQLite
 
@@ -130,11 +130,11 @@ Mock network boundaries rather than internal implementation details.
 
 ### Order
 
-1. Run prompt cases with **Ollama** for fast/local feedback.
+1. Optionally run prompt cases through an explicitly configured LiteLLM/Ollama-compatible endpoint for development comparison.
 2. Run deterministic mocks for application invariants.
 3. Run a smaller, budget-bounded suite against **OpenAI GPT-5.4-mini**.
 
-Ollama is a development aid, not a behavioral substitute for the target model.
+A local-compatible model is a development aid, not a behavioral substitute for the target model.
 
 ### Evaluation dataset
 
@@ -185,8 +185,8 @@ Use structured assertions for invariants and a rubric for subjective quality. Av
 | Composable product UI | Component tests if added + Playwright accessibility/responsive checks |
 | SQLite server persistence | Repository integration tests + reconnect journey |
 | Client-independent execution | Disconnect/reconnect test and recorded server status |
-| Five total attempts | Fake-timer unit tests + MSW transient failures |
-| Ollama/OpenAI validation | Versioned evaluation cases and summarized results |
+| Five total attempts on explicit failed-intent retry | Fake-timer unit tests + transient catalog fixtures |
+| Configured-provider validation | Versioned live evaluation cases, exact provider/model metadata, catalog boundary evidence, and summarized results |
 
 ## 9. Test data and reproducibility
 
