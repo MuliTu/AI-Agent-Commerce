@@ -173,7 +173,7 @@ Any omitted or simplified item must be described plainly in the README.
 
 ## Live QA remediation slice
 
-Execute the five bounded tasks in `QA_REMEDIATION_TASKS_2026-10-30.md`, integrate them behind deterministic orchestration boundaries, run the full static/unit/browser gate, and hand the exact original scenarios plus 20 new creativity-rated cases to an independent live-provider QA run. Do not treat deterministic fixtures as live-model evidence.
+Execute the bounded remediation tasks recorded for the project, integrate them behind deterministic orchestration boundaries, run the full static/unit/browser gate, and hand the exact original scenarios plus new creativity-rated cases to an independent live-provider QA run. Detailed QA handoffs and run results stay in ignored local evidence rather than the submitted repository. Do not treat deterministic fixtures as live-model evidence.
 
 ## October 31 evidence-grounding closure
 

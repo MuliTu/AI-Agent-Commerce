@@ -301,7 +301,7 @@ A price-picker component is discussion-only and is not part of this implementati
 
 ## 17. Live-provider QA remediation
 
-The confirmed scenarios in `QA_LIVE_AI_REPORT_2026-10-30.md` are release regressions. Acceptance requires deterministic coverage for each invariant and a separate opt-in live-provider replay. Provider-plan observability is bounded to structural summaries and must not persist credentials, authorization data, raw provider responses or catalog payloads. Opt-in server diagnostics use one hashed correlation key per conversation/turn and structured stages for request receipt, interpreted plan, follow-up targeting, search constraints, result summaries and errors. Summary mode logs no raw shopper prompt or product titles. Verbose prompt/title content is bounded, development-only, disabled by default and documented explicitly.
+The confirmed live scenarios summarized in the README are release regressions. Acceptance requires deterministic coverage for each invariant and a separate opt-in live-provider replay. Detailed run artifacts and QA reports remain local under ignored storage rather than shipping in the repository. Provider-plan observability is bounded to structural summaries and must not persist credentials, authorization data, raw provider responses or catalog payloads. Opt-in server diagnostics use one hashed correlation key per conversation/turn and structured stages for request receipt, interpreted plan, follow-up targeting, search constraints, result summaries and errors. Summary mode logs no raw shopper prompt or product titles. Verbose prompt/title content is bounded, development-only, disabled by default and documented explicitly.
 
 ## 18. Semantic-evidence relevance stage
 
