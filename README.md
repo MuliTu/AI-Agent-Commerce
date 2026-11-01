@@ -1,177 +1,173 @@
 # Bazak AI Agent Commerce
 
-A conversational product-discovery prototype built with Next.js, TypeScript, the Vercel AI SDK, and the supplied DummyJSON Products API. A shopper can ask for one or several products in English, refine the request, see catalog-backed React product cards, and resume saved conversations.
+Bazak is a small shopping assistant. You write what you want in normal language, and it shows product cards from the DummyJSON catalog.
+
+It can handle requests such as:
+
+- “Show me smartphones under $300.”
+- “Find a laptop and a fragrance.”
+- “Show me the second product from each list.”
+- “Make that option cheaper.”
+
+The language model helps understand the request. It is **not** allowed to invent products, prices, IDs, or HTML. Product facts come from DummyJSON and are checked by application code.
 
 ## Run locally
 
-Use Node.js 22.13 or newer and npm:
+You need Node.js 22.13 or newer and npm.
 
 ```bash
+git clone https://github.com/MuliTu/AI-Agent-Commerce.git
+cd AI-Agent-Commerce
 npm ci
+cp .env.example .env
 npm run dev
 ```
 
-Open `http://localhost:3000`. Conversation data defaults to `var/data/commerce.sqlite`; set the server-only `BAZAK_DATABASE_PATH` to use a different SQLite file.
+Open [http://localhost:3000](http://localhost:3000).
 
-For correlated server-side debugging during `npm run dev`, opt into bounded structured logs:
-
-```bash
-BAZAK_SERVER_DIAGNOSTICS=summary npm run dev
-# Explicitly include a redacted, 500-character prompt and trusted product titles:
-BAZAK_SERVER_DIAGNOSTICS=verbose npm run dev
-```
-
-Diagnostics are off by default and always off when `NODE_ENV=production`. Every line starts with `bazak_server_diagnostic` and contains a hashed per-turn `traceId`. Summary mode records prompt length/language/hash, interpreted intent structure, follow-up target, search filters, product IDs/counts and error codes; it does not record raw shopper text, model prose, product titles, catalog descriptions, credentials or provider envelopes. Verbose mode is development-only, bounded and secret-redacted, but may still contain shopper wording, so enable it only for a controlled local reproduction.
-
-Conversation memory is server-owned and versioned. Each completed turn atomically advances a compact `conversation_state` projection containing up to eight active intents, current focus when unambiguous, the last explicit operation, and the displayed result order. Existing databases migrate additively: no message, turn, intent, or product snapshot is rewritten, and an older conversation receives its first projection when its next turn completes. The intent-planning model still receives only the current shopper prompt and bounded active intent state, not the full transcript.
-
-Code rollback to a pre-v6 application requires stopping all writers, backing up the SQLite file, and removing only the migration marker with `BEGIN IMMEDIATE; DELETE FROM schema_migrations WHERE version = 6; COMMIT;`. Leave `conversation_state` and `decision_events` in place so no v6 data is discarded. The older application then ignores those additive tables. Migration 6 uses `IF NOT EXISTS`, so a later roll-forward records version 6 again without replacing the retained rows.
-
-Displayed ordinal references such as “show me the second one” are resolved deterministically from persisted display order when exactly one product group is in scope. Selection-only turns bypass planning. For compound cheaper/USD-budget or separately named-product turns, the server validates the bounded reference against persisted results and enforces the referenced intent/category after planning; additive product clauses keep the exact selected product visible. “Make the second one cheaper” returns only products priced strictly below that saved product and excludes the product itself, while any tighter budget remains active. Comparative `cheaper` without a selected product asks for an explicit maximum price instead of pretending that sorting is a price comparison. The adjective `cheap` remains price ordering. An ambiguous reference is not guessed.
-
-The safe default, `LLM_PROVIDER=disabled`, makes shopping requests fail closed. For the hosted boundary, configure these server-only values in an ignored environment file:
+The safe default is `LLM_PROVIDER=disabled`; shopping requests then fail honestly instead of using a fake model. To use the assignment model, put the server-only values supplied for the assignment in the ignored `.env` file:
 
 ```text
 LLM_PROVIDER=openai
-LLM_API_KEY=...
+LLM_API_KEY=your-key
 LLM_MODEL=gpt-5.4-mini
 LLM_BASE_URL=https://api.openai.com/v1
 ```
 
-The local testing branch also accepts `LLM_PROVIDER=litellm` with an explicitly configured OpenAI-compatible base URL and model. Credentials must never use a `NEXT_PUBLIC_*` name or be committed. The application does not silently switch providers, endpoints, or models.
+Never use a `NEXT_PUBLIC_*` name for a secret and never commit `.env`.
 
-## What is implemented
+Conversation data defaults to `var/data/commerce.sqlite`. To use a separate database:
 
-- A single shopper-facing agent uses AI SDK schema-validated structured output to extract up to eight independent intents. In the live path the model does **not** choose or invoke catalog tools: application code resolves categories, invokes DummyJSON, filters, ranks, persists, and renders deterministically.
-- System prompts live in `src/lib/ai/prompts`; shopper text and prior intent state are separate typed data.
-- Explicit USD budgets, rating, stock, brand, category, and ordering constraints are scoped per intent. ILS/NIS/₪ budgets are not treated as USD.
-- Unsupported semantics such as brand exclusion, minimum prices, contradictory bounds, and shared multi-product budgets fail honestly instead of being silently inverted or discarded.
-- Explicit catalog-proof requests use a fail-closed evidence gate. Known capabilities use reviewed synonyms; unseen phrases such as “satellite calling” are extracted from proof language and matched only against trusted product title, description, or tags. Ordinary descriptive browsing remains ranking context rather than an automatic hard filter.
-- Product facts come only from schema-validated DummyJSON responses. Model text cannot introduce a product, product ID, HTML, or executable UI.
-- Conversations, messages, turns, intents, results, and product snapshots are written to SQLite before/after execution. Refresh, a second client using the conversation URL, and the saved-conversation list read that server state.
-- Accepted work continues in the current server process if the browser disconnects. A bounded status poll reconciles a client timeout with the persisted terminal result without submitting the operation twice.
-- Product results render in stable batches of five with independent multi-intent groups, scoped empty/failure states, keyboard-accessible controls, and responsive layouts.
+```bash
+BAZAK_DATABASE_PATH=var/data/my-test.sqlite npm run dev
+```
+
+## What you should see
+
+1. A chat box and example shopping prompts.
+2. Your message in the conversation.
+3. One result group for each shopping goal.
+4. Product cards with catalog title, description, price, rating, stock, image, and evidence label.
+5. Saved conversations that can be opened again after refresh.
+6. A focused clarification when the application cannot safely decide which product or list you mean.
+
+The application supports English and Hebrew input. The interface follows the detected conversation direction.
 
 ## Architecture and trade-offs
 
-The request path is:
+Think of the system as five small jobs:
 
-1. `POST /api/orchestrate` validates and accepts a stable conversation/turn identity.
-2. SQLite records the queued turn and shopper message before model/catalog work starts.
-3. The model returns a structured intent plan. Provider-generated tag guesses remain ranking language rather than exact catalog filters.
-4. Deterministic code resolves each product term against the current trusted category list.
-5. Known categories use `GET /products/category/{slug}?limit=100&skip=N` until the bounded category result is complete. Results are deduplicated by product ID, hard-filtered, and ranked. Unknown categories may use `GET /products/search?q=...&limit=20&skip=0` or ask one focused category question.
-6. Product details used to preserve earlier results are revalidated with `GET /products/{id}`. Category discovery uses `GET /products/category-list`.
-7. One terminal result and its ordered product snapshots are persisted, then returned as typed application-owned UI.
+1. **The model interprets language.** It returns a schema-validated structured model plan with product goals and actions.
+2. **The orchestrator checks the plan.** It resolves categories, previous results, budgets, clarifications, and selected products.
+3. **The catalog client fetches trusted data.** Application code invokes DummyJSON; the model does not call the catalog directly.
+4. **Deterministic code filters first.** Category, USD price, rating, stock, and other hard constraints must pass before semantic ranking.
+5. **React renders typed results.** Model text cannot create product cards or executable UI.
 
-Category-first retrieval was chosen because phrases such as “phone for photography” describe a use case, not necessarily a product title. Searching that full phrase first can incorrectly discard every smartphone. Ranking uses lexical overlap across trusted title, tags, category, brand, and description, blended with a bounded rating signal; explicit constraints remain hard filters.
+SQLite stores conversations, messages, turns, intents, product snapshots, compact conversation state, decision events, and sanitized catalog-call evidence. This supports refresh, saved conversations, recovery, and references such as “the second one.”
 
-For explicit feature-proof requests, exact catalog evidence is deliberately stricter than general relevance. Curated capabilities can use reviewed synonyms, while an unseen feature uses conservative lexical evidence and returns an honest empty result when the catalog does not establish it. The rejected shortcut was treating semantic similarity as proof: “satellite SOS” may be related to “satellite calling” without proving voice-call support.
+## DummyJSON retrieval
 
-The semantic-evidence stage, originally developed on a local experiment branch and now present in the current candidate, adds model-assisted relevance and evidence after deterministic hard filtering. It returns `supported`, `partial`, `contradicted`, or `unknown`, bounded confidence, a relevance score, and exact title/description/tag quotes. Application code verifies every quote. Normal results show verified matches first, related-but-not-verified products next, and unknown products last; contradicted products are removed. “Only verified” requests remain strict. Provider failure or invalid evidence falls back to the existing deterministic behavior. Positive literal catalog evidence can correct a probabilistic contradiction, but bounded negation checks prevent phrases such as “does not support satellite calling” from becoming positive proof.
+The main catalog calls are:
 
-```mermaid
-flowchart TD
-  U[Shopper message] --> P[Intent model: structured product goals]
-  P --> R[DummyJSON retrieval per intent]
-  R --> H[Deterministic hard filters: category, price, stock, rating, brand]
-  H --> E[OpenAI evidence and relevance batch for every displayed candidate]
-  E --> V[Validate schema and exact catalog quotes]
-  V -->|valid| T[Evidence tiers: supported / partial / unknown; contradicted removed]
-  T --> S[Sort: tier, semantic relevance score, lexical tie-break]
-  S --> D[Typed product cards with verified / related / unknown labels]
-  V -->|timeout, provider error, or malformed batch| F[Disclosed deterministic lexical/evidence fallback]
-  F --> D
-  U -->|explicit only verified| X[Strict supported-only gate]
-  T --> X
-  X --> D
-```
+| Purpose | Endpoint and parameters |
+| --- | --- |
+| Discover categories | `GET /products/categories` or `/products/category-list` |
+| Read a category | `GET /products/category/{slug}?limit=100&skip=N` |
+| Search an unknown term | `GET /products/search?q={query}&limit=20&skip=0` |
+| Revalidate one product | `GET /products/{id}` |
 
-The intent model decides what to search for; it does not author products. DummyJSON remains the product source. The second model evaluates only retrieved catalog text and cannot bypass hard filters. Its score influences order only within an evidence tier; ties preserve the deterministic baseline order, which is lexical relevance normally and price ascending for an explicit cheaper request. Exact evidence determines whether a product may be called verified.
-
-The first independent 15-case live A/B run found that silent fallback, narrow strict wording, contextual negation, category synonyms, and a 12-product evaluator cap could undermine that contract. The remediation keeps strict requests fail-closed, labels only evaluated products, discloses fallback, derives global copy from actual card tiers, and uses narrow literal-evidence consistency so direct terms such as `slim` cannot be rejected while related terms such as `satellite SOS` still do not prove satellite calling.
-
-The second live retest isolated one remaining strict failure: the evidence extractor passed an expanded planner query instead of the literal adjective in “documented slim laptops.” The experiment now extracts that adjective directly, can combine exact whole-token evidence from multiple trusted fields, and handles the reviewed daytime-fresh negative preference only when both unwanted terms are literally established. Whole-token matching prevents substrings such as `red` inside `Predator` from becoming false proof.
-
-Two alternatives were rejected for this assignment:
-
-1. **A multi-agent planner/searcher/writer pipeline.** It adds handoff state, latency, failure modes, and inconsistent context without improving the small catalog task. One structured plan plus deterministic per-intent work is easier to inspect and test.
-2. **Model-authored products or model-authored HTML.** It could produce fluent answers, but it breaks the assignment’s catalog grounding and composable React UI goals. Only validated catalog objects reach product components.
-
-A third production alternative—managed durable storage plus a queue/worker lease—would survive process and host failure. SQLite was chosen for a reviewable local prototype, not as a claim of distributed durability.
+Known categories use category-first retrieval. This is important because a phrase such as “phone for photography” describes a use case, not necessarily a product title. Results are deduplicated by ID, hard-filtered, and then ranked.
 
 ## Ambiguity, off-catalog requests, and failures
 
-Missing optional preferences do not block a known category. The app asks one clarification only when the category is unresolved or the result is materially empty/split. In a multi-intent request, an unaffected sibling can still complete. Requests such as flights receive a bounded explanation and never reuse stale product results.
+- A request for a phone and a fragrance becomes two independent intents in one conversation turn.
+- A clear budget stays with its intended product. If the budget could apply to two products, the app asks which one.
+- A reference such as “the second one” uses the saved displayed order; it is not resolved by searching again.
+- A request for the second item from each displayed list returns one saved product per list when the reference is unambiguous.
+- Comparative “cheaper” needs a real reference price or a clarification. It is not treated as “sort by price.” The adjective “cheap” may request price-ascending order.
+- Flights, weather, checkout, and other off-catalog requests receive a bounded limitation message and must not reuse stale products.
+- Unsupported constraints fail honestly instead of being silently inverted or discarded.
 
-An additive prompt such as “Also show me perfumes under $100” preserves the prior product topic as a sibling. A later category-free “Show me cheaper options” first asks which active topic to refine, then asks for a maximum price because no product comparison baseline was selected. A named request such as “Show me cheaper perfumes” skips the category question but still asks for that price threshold. The adjective `cheap` continues to request price-ascending ordering without a comparison claim.
+## Evidence and ranking
 
-The shared transient retry primitive supports five total attempts, but the live orchestrator applies it only when the shopper explicitly retries a retryable failed intent. Initial catalog operations are not uniformly wrapped. Structured-plan schema failures use a separate maximum of three generation attempts; the semantic evaluator and judge set SDK retries to zero. Completed catalog operations are persisted as sanitized `tool_runs` with boundary path/query, attempt, status, duration, and bounded product evidence. Therefore five-attempt **initial execution** remains deferred, while catalog-attempt observability is implemented.
+After hard filtering, a bounded model-assisted stage can label catalog-backed candidates as `supported`, `partial`, `unknown`, or internally `contradicted`. Exact evidence quotes are verified against trusted title, description, or tags. Semantic confidence is useful for order, but it is never proof by itself.
 
-### Persistence, full disks, corruption, and cleared storage
+“Only verified” requests fail closed. If evidence evaluation fails, the application uses the disclosed deterministic fallback; it does not invent evidence.
 
-SQLite errors fail the request rather than falling back to browser-only state:
+## Persistence, full disks, corruption, and cleared storage
 
-- **Disk full/read-only/locked:** the write fails; the UI reports an unavailable request and must not claim it was saved.
-- **Corrupt database/schema:** startup or the affected read/write fails closed. Recovery requires restoring a known-good database or intentionally starting a new one; the app does not auto-repair unknown corruption.
-- **Database cleared during a conversation:** a later status/read returns “not found.” The client offers a new conversation rather than reconstructing trusted products from model text.
-- **Server restart during work:** startup recovery marks stale queued/running work honestly; SQLite alone cannot continue the interrupted computation.
+SQLite is a practical local choice, not a distributed production database.
 
-## Verification
+- **Disk full, read-only, or locked:** the request fails; the UI must not claim it was saved.
+- **Corrupt database or schema:** the application fails closed. Restore a known-good database or intentionally start a new one.
+- **Database cleared:** the conversation is not reconstructed from model text. The client offers a new conversation.
+- **Server stops during work:** startup recovery marks stale work honestly. SQLite cannot continue the interrupted computation by itself.
+- **Browser disconnects:** accepted work may continue in the current server process, and the client polls the persisted result without resubmitting it.
+
+## End-to-end evaluation
+
+Run the normal deterministic checks:
 
 ```bash
 npm run check
 npm run build
 npm run test:e2e
-npm start
+npm run test:eval-harness
 ```
 
-`npm run check` runs lint, generated Next.js route types, TypeScript, and Vitest unit/integration tests. The deterministic suites cover schema boundaries, ranking, category-first and multi-intent behavior, USD/ILS scoping, cheap sorting, five-item pagination, retry classification, persistence/idempotency, refresh/resume, timeout recovery, prompt injection, long conversations, and desktop/mobile layout.
+- `check` runs ESLint, generated Next.js route types, TypeScript, and Vitest unit/integration tests.
+- Playwright tests browser behavior with an intercepted orchestration boundary. They do **not** prove that OpenAI or live DummyJSON works.
+- `test:eval-harness` tests the evaluation machinery without paid calls.
 
-The evidence suite also contrasts explicit proof requirements, unseen feature phrases, positive trusted-text matches, ordinary descriptive browsing, multilingual/multi-intent scoping, and false-positive controls. The latest bounded live report is recorded under `outputs/QA_OPEN_VOCAB_LIVE_RETEST_REPORT_2026-10-31.md`; it is evidence for that sampled provider run, not a guarantee about every future model response.
-
-### End-to-end evaluation
-
-Playwright intercepts `/api/orchestrate` for deterministic browser journeys. That proves UI and recovery behavior, not the configured model provider or live DummyJSON availability. Provider-realistic checks are a separate, explicitly budgeted local review; credentials are not stored in the repository. Tests do not currently prove destructive database corruption recovery, real disk-full behavior, a full accessibility audit, distributed concurrency, or consistent quality across many live model samples.
-
-#### Live behavior evaluation
-
-The opt-in live evaluation layer is deliberately separate from `npm test`, `npm run check`, and Playwright:
+The real-provider evaluation is separate and opt-in:
 
 ```bash
-# Uses only the configured real provider and the live DummyJSON catalog.
-# It never substitutes either boundary with a mock.
-npm run eval:live
+# Uses the configured real provider and live DummyJSON. No silent mocks.
+BAZAK_EVAL_ARTIFACT_DIR=var/evaluations/live-ai/my-run npm run eval:live
 ```
 
-The harness creates and verifies a unique `BAZAK_DATABASE_PATH` under the operating-system temporary directory. Each turn reopens that SQLite file and records the shopper input, interpreted decision events, memory before/after, active focus, persisted catalog arguments, product IDs/prices, response, objective assertion reasons, persistence evidence, independent judge result, timing, and available usage. Artifacts default to the operating-system temporary directory under `bazak-live-eval-artifacts/<run-id>/`; set `BAZAK_EVAL_ARTIFACT_DIR` to retain them elsewhere. Do not point it at a directory containing user data.
+The live harness uses a unique temporary SQLite database and records each turn, available state transitions, catalog arguments/results, product IDs/prices, deterministic assertion reasons, persistence evidence, judge verdict, timing, and available usage. Results are `PASS`, `FAIL`, or `INCONCLUSIVE`. A judge cannot override a deterministic failure. The default judge is independently executed but uses the same configured provider/model, so it is not provider- or model-independent.
 
-Results are `PASS`, `FAIL`, or `INCONCLUSIVE`. Objective failures are immutable and an LLM judge cannot override them. The judge is an independently executed assessment, but currently uses the same configured provider/model and is therefore not provider-independent. Missing credentials, provider/catalog unavailability, incomplete boundary evidence, or insufficient judge evidence is `INCONCLUSIVE`; the harness does not silently fall back. Both `FAIL` and `INCONCLUSIVE` make `npm run eval:live` exit nonzero, so only a complete `PASS` is green CI evidence. `callCounts` records application turns, actual captured catalog HTTP calls, and judge calls. The application runtime does not currently expose exact provider request or token counts, so the summary states that limitation rather than guessing.
+Completed catalog boundaries are persisted as sanitized `tool_runs`. Uniform retry for initial calls remains deferred; the implemented explicit failed-intent retry is a separate bounded path.
 
-`npm run test:eval-harness` tests the harness mechanics without making live calls. Scenarios live under `evals/live/scenarios.ts` and cover natural multi-turn refinement, ambiguous interruptions and clarification, topic switches, implicit ordinal references, paraphrases, and adversarial catalog-grounding attempts. This harness was based on commit `2435b86`; each run records the exact evaluated `candidateRevision` separately from that compatibility base, so later behavior changes can be evaluated without modifying product logic.
+Latest verified deterministic gate on the merged candidate:
 
-The earlier recovered-candidate run evaluated commit `5470d732950a77d44edd0834958d23055fb01b28` with real OpenAI `gpt-5.4-mini` and live DummyJSON and passed 26/26 turns. It remains historical evidence, not the current authoritative result or a general quality claim.
+- 418/418 Vitest tests passed.
+- 11/11 harness-mechanics tests passed.
+- Production build passed.
+- 35/35 Playwright tests passed.
+- Product commit `3ed708c` passed GitHub CI; its documentation-only successor must also pass CI.
 
-The latest local service-level run evaluated the dirty correction worktree based on `2aea20966e2c93fd78b6f307250c5c6d00083073` with worktree identity `8915c71ca2c63eb344f20c3e09f26467bec3c61b356957c3b8a85298fe53e9fc`. It passed 27/30 turns across 24 scenarios: two judge-only failures found that the terminal response string was too generic even though grounded product results passed deterministic checks, and one execution failure rejected an explicitly scoped camera-phone/fragrance budget plan. Artifacts are under `var/evaluations/live-ai/full-current-2026-11-01-run-01/`.
+Latest live evidence must be read as samples, not a reliability percentage:
 
-A separate real-browser run covered five submission-critical scenarios through the rendered application. Four passed and one failed: after an ambiguous laptop/fragrance budget prompt, selecting `laptops` lost the `$100` constraint and the sibling fragrance request. The explicitly scoped camera-phone/fragrance case passed in that browser sample despite failing in the service run, so the behavior is stochastic and not proven reliable. The browser run also failed to use its requested isolated database and appended five evaluation conversations to an existing manual-QA database; no existing conversations were intentionally changed or deleted. The ignored report is under `var/evaluations/live-ai/browser-final-2026-11-01/`. These failures are open limitations, not resolved claims.
+- The full service-level sample passed 27/30 turns. Two failures were judge-only response-copy failures; one was an execution failure.
+- A five-scenario real-browser sample passed 4/5 and exposed a lost multi-intent budget state.
+- A later targeted post-merge browser run of that budget flow passed once with a verified isolated database. It proves the successful path works; it does not erase the earlier failure or prove stability.
 
-The temporary uncommitted worktree used during development was lost and could not be recovered byte-for-byte. The current candidate is a reviewed reconstruction from the last committed base, durable artifacts, and regression evidence. Its latest deterministic gate recorded 418/418 Vitest tests, 11/11 harness-mechanics tests, a successful production build, and 35/35 mocked-boundary Playwright tests. Those green deterministic gates do not override the live failures described above.
+Ignored local evidence is under `var/evaluations/live-ai/`. It is intentionally not committed because it may contain full prompts and catalog data.
 
-## Original assignment versus project choices
+## Important limitations
 
-The employer request requires a local AI shopping experience using the supplied DummyJSON widgets/API, natural-language and multi-intent shopping, composable product UI, conversation refresh/new/list/resume behavior, tests/evaluation spanning input → retrieval → rendering, setup/architecture documentation, at least two rejected alternatives, limitations, and a “what I would change with another week” reflection. OpenAI mini/nano models were allowed, not mandated.
+- Model behavior is probabilistic; one successful live run is not a quality guarantee.
+- The raw structured provider plan is not yet recorded in every failure path, so some stochastic divergences are difficult to explain completely.
+- Initial provider and catalog operations do not share one uniform five-attempt retry policy. Explicit retry of a retryable failed intent is bounded separately.
+- The semantic evaluator and default judge add latency and provider cost.
+- SQLite does not provide multi-host durability or queued background execution.
+- There is no cart, checkout, authentication, deployment, or production job system.
+- Tests do not simulate every corrupt-database, disk-full, screen-reader, distributed-concurrency, or provider-variance case.
 
-SQLite, the Vercel AI SDK, GPT-5.4-mini, the exact retry count, persisted tool attempts, a local LiteLLM option, and the timezone attached to the planning deadline are project decisions or assumptions. `outputs/SPEC.md` records both the employer boundary and those authored targets; incomplete authored targets are not presented as completed employer requirements.
+## Alternatives considered and rejected
 
-Cart, checkout, authentication, deployment, and production job infrastructure are outside the current submission scope. The supplied OpenAPI reference remains unchanged at `docs/dummyjson_products_openapi.yaml`.
+1. **A planner agent, search agent, and writer agent.** This adds handoffs, cost, latency, and inconsistent context for a small catalog. One structured model plan plus deterministic application work is easier to inspect.
+2. **Let the model write products or HTML.** This looks flexible but permits invented facts and breaks the composable React requirement. Only validated catalog objects reach product components.
+3. **Store everything only in the browser.** Refresh and recovery become unreliable. Server-owned SQLite state was chosen for the local assignment.
 
 ## What I would change with another week
 
-I would first replace process-bound execution and local SQLite with a durable database and queued worker lease, because recovery at the browser’s 30-second boundary exposed how important authoritative job state is. Next I would add fault-injection tests for initial provider/catalog retries and persist every attempt, then run a small labeled relevance set across ambiguous, multi-intent, and empty-result prompts to tune ranking with evidence rather than intuition. Finally, I would run a full keyboard/screen-reader audit and add deployment-specific storage and observability checks. I would keep the catalog-first trust boundary and typed React rendering: those constraints prevented fabricated products even when the prompt asked for one.
+I would first add raw-plan diagnostics around every validation path and a deterministic guard that reconstructs an ambiguous multi-product budget from trusted prompt/category evidence even when the model plan shape changes. Then I would replace process-bound SQLite execution with a durable database and queue/worker lease, add fault-injection for initial retries, calibrate semantic evaluation on a labelled dataset, and complete a keyboard and screen-reader audit.
 
-For semantic evidence, I would build a labelled set of supported, contradicted, and unknown claims and calibrate the existing evaluation judge against it, preferably with an explicitly configured model different from the application model. Judge confidence or similarity would still never count as product proof. OpenAI and the existing LiteLLM/Ollama-compatible development route are viable evaluation backends, but only the explicitly recorded configured provider/model is evidence for a run; the deterministic lexical gate remains the safe baseline and fallback.
+## Assignment map and study guide
 
-## Conventions
+The supplied employer requirements are mapped to the implementation in [outputs/SUBMISSION_GUIDE.md](outputs/SUBMISSION_GUIDE.md). That guide also explains what to demonstrate, what to study, likely interview questions, and which limitations to say out loud.
 
-Domain code and reusable components use named exports. Next.js route pages/layouts use framework-required default exports. Automated tests live in `tests/`; deterministic catalog fixtures and their provenance are in `tests/fixtures/catalog/`.
+Detailed design history is preserved in `outputs/SPEC.md`, `outputs/PLAN.md`, `outputs/DECISIONS.md`, and `outputs/TEST_PLAN.md`. The supplied DummyJSON OpenAPI reference remains unchanged at `docs/dummyjson_products_openapi.yaml`.
