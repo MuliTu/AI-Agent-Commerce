@@ -132,6 +132,22 @@ The evidence suite also contrasts explicit proof requirements, unseen feature ph
 
 Playwright intercepts `/api/orchestrate` for deterministic browser journeys. That proves UI and recovery behavior, not the configured model provider or live DummyJSON availability. Provider-realistic checks are a separate, explicitly budgeted local review; credentials are not stored in the repository. Tests do not currently prove destructive database corruption recovery, real disk-full behavior, a full accessibility audit, distributed concurrency, or consistent quality across many live model samples.
 
+### Live behavior evaluation
+
+The opt-in live evaluation layer is deliberately separate from `npm test`, `npm run check`, and Playwright:
+
+```bash
+# Uses only the configured real provider and the live DummyJSON catalog.
+# It never substitutes either boundary with a mock.
+npm run eval:live
+```
+
+The harness creates and verifies a unique `BAZAK_DATABASE_PATH` under the operating-system temporary directory. Each turn reopens that SQLite file and records the shopper input, interpreted decision events, memory before/after, active focus, persisted catalog arguments, product IDs/prices, response, objective assertion reasons, persistence evidence, independent judge result, timing, and available usage. Artifacts default to the operating-system temporary directory under `bazak-live-eval-artifacts/<run-id>/`; set `BAZAK_EVAL_ARTIFACT_DIR` to retain them elsewhere. Do not point it at a directory containing user data.
+
+Results are `PASS`, `FAIL`, or `INCONCLUSIVE`. Objective failures are immutable and an LLM judge cannot override them. Missing credentials, provider/catalog unavailability, or insufficient judge evidence is `INCONCLUSIVE`; the harness does not silently fall back. `callCounts` records application turns, persisted catalog calls, and judge calls. The application runtime does not currently expose exact provider request or token counts, so the summary states that limitation rather than guessing.
+
+`npm run test:eval-harness` tests the harness mechanics without making live calls. Scenarios live under `evals/live/scenarios.ts` and cover natural multi-turn refinement, ambiguous interruptions and clarification, topic switches, implicit ordinal references, paraphrases, and adversarial catalog-grounding attempts. This harness was based on commit `2435b86`; it depends only on the public orchestration/persistence interfaces, so later behavior changes can be evaluated without modifying product logic.
+
 ## Original assignment versus project choices
 
 The employer request requires a local AI shopping experience using the supplied DummyJSON widgets/API, natural-language and multi-intent shopping, composable product UI, conversation refresh/new/list/resume behavior, tests/evaluation spanning input → retrieval → rendering, setup/architecture documentation, at least two rejected alternatives, limitations, and a “what I would change with another week” reflection. OpenAI mini/nano models were allowed, not mandated.
