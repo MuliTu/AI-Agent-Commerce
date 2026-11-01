@@ -35,7 +35,12 @@ export type ConversationContext = {
   displayedProductReference?: DisplayedProductReference;
   displayedProductSelection?: DisplayedProductSelection;
   displayGroups?: DisplayGroupReference[];
-  ordinalResolutionIssue?: { position: number; categories: string[]; reason: 'missing_position' | 'ambiguous_group' };
+  ordinalResolutionIssue?: {
+    position: number;
+    categories: string[];
+    missingCategories?: string[];
+    reason: 'missing_position' | 'ambiguous_group';
+  };
   pausedOutcomes?: OrchestrationResult['outcomes'];
   selectedProducts?: ConversationMemoryState['selectedProducts'];
 };
@@ -153,7 +158,7 @@ export function buildConversationContext(input: {
   const wantsBoth = /\bboth\b|שתי\s+(?:הרשימות|האפשרויות)/iu.test(input.prompt);
   const candidates = requestedGroups.length > 0
     ? requestedGroups
-    : wantsAll ? latestByIntent.filter(({ lifecycle }) => lifecycle === 'active')
+    : wantsAll ? latestByIntent
       : latestByIntent.filter((group) => group.lifecycle === 'active');
   if (wantsAll && (candidates.length < 2 || (wantsBoth && candidates.length !== 2))) return {
     previous, stateRevision: input.persistedState?.revision ?? 0,
@@ -168,7 +173,12 @@ export function buildConversationContext(input: {
       currentFocusIntentId: input.persistedState?.currentFocusIntentId,
       pausedOutcomes: input.persistedState?.pausedOutcomes, displayGroups,
       selectedProducts: input.persistedState?.selectedProducts,
-      ordinalResolutionIssue: { position, categories: candidates.map(({ category, intentId }) => category ?? intentId), reason: 'missing_position' },
+      ordinalResolutionIssue: {
+        position,
+        categories: candidates.map(({ category, intentId }) => category ?? intentId),
+        missingCategories: missing.map(({ category, intentId }) => category ?? intentId),
+        reason: 'missing_position',
+      },
     };
     const groups = candidates.map((group) => ({ group, product: group.outcome.products[position].product }));
     return {

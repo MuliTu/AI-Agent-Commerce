@@ -224,11 +224,15 @@ export class ConversationExecutionService {
           ? {
               turnId: input.turnId,
               status: 'partial' as const,
-              response: `I do not have a saved displayed result at position ${context.ordinalResolutionIssue.position + 1} for every requested list.`,
+              response: context.ordinalResolutionIssue.reason === 'missing_position'
+                ? `The following displayed lists do not have an item at position ${context.ordinalResolutionIssue.position + 1}: ${context.ordinalResolutionIssue.missingCategories?.join(', ') ?? 'the requested list'}.`
+                : `I cannot determine which displayed lists should be used for position ${context.ordinalResolutionIssue.position + 1}.`,
               outcomes: [{
                 intent: { id: `clarify:${input.turnId}`, goal: 'Clarify displayed product selection', query: input.prompt, constraints: {}, status: 'needs_clarification' as const },
                 products: [],
-                clarification: { field: 'query' as const, reason: 'requested' as const, question: 'Should I search for new results or use the current displayed results?', options: ['Search for new results', 'Use the current displayed results'] },
+                clarification: context.ordinalResolutionIssue.reason === 'missing_position'
+                  ? { field: 'query' as const, reason: 'requested' as const, question: 'Should I search for new results for the missing lists or keep the current displayed results?', options: ['Search for new results', 'Keep the current displayed results'] }
+                  : { field: 'query' as const, reason: 'requested' as const, question: 'Which displayed lists should I use?', options: ['Use the two most recent displayed lists', 'Name the lists'] },
               }],
             }
           : context.displayedProductReference?.selectionOnly
