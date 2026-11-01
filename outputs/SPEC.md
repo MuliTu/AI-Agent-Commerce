@@ -41,7 +41,7 @@ This document separates the employer assignment from project-authored design tar
 
 ### 4.2 Multi-intent example
 
-“I need a phone for photography and a fragrance gift under $80” is one conversation turn containing two intents. A **Single Agent** owns the turn, decomposes it into separate intent records, invokes the appropriate catalog tools, and synthesizes one coherent response. This avoids the operational complexity and inconsistent context of a multi-agent system while still allowing parallelizable tool work internally.
+“I need a phone for photography and a fragrance gift under $80” is one conversation turn containing two intents. A **Single Agent** owns the turn and returns a schema-validated structured plan. The application decomposes that plan into intent records, invokes the appropriate catalog boundaries, and synthesizes one coherent result. This avoids multi-agent coordination while keeping product identity, prices, filters, and tool execution under deterministic application control.
 
 ### 4.3 Adaptive clarification
 
@@ -78,7 +78,7 @@ type ShoppingIntent = {
 };
 ```
 
-In the implemented live route, the model is responsible for structured intent extraction and draft shopper prose. Deterministic application code resolves categories, selects and invokes catalog operations, validates explicit constraints, clarifies, filters, scores, persists, and renders. The application replaces unusable provider prose with bounded shopper-safe copy. A separate experimental tool-loop runtime exists under `src/lib/agent/`, but it is not the live orchestration path.
+In the implemented live route, the model is responsible for schema-validated structured intent/action extraction and draft shopper prose. It is not given catalog tools. Deterministic application code validates the plan, resolves categories and displayed references, selects and invokes catalog operations, clarifies, filters, scores, persists, and renders. The application replaces unusable provider prose with bounded shopper-safe copy. An earlier isolated AI SDK model-directed tool-loop prototype was never connected to `/api/orchestrate` and has been removed; the shared catalog handlers and schemas used by the deterministic live path remain.
 
 ### 5.2 Tool boundary
 
@@ -180,7 +180,7 @@ Important boundary: SQLite does **not** make an in-flight process survive server
 
 Do not retry validation failures, authentication/authorization failures, unsupported requests, or deterministic 4xx responses. Record each attempt. Tool actions must be idempotent or protected by an idempotency key.
 
-Current status: the shared retry primitive and explicit failed-intent retry path exist, but initial provider/catalog operations are not yet uniformly wrapped and completed turns currently persist no `tool_runs`. Five-attempt initial execution and persisted attempt observability are deferred rather than claimed as complete.
+Current status: the shared retry primitive and explicit failed-intent retry path exist, but initial provider/catalog operations are not uniformly wrapped. Structured-plan schema rejection has its own bounded three-attempt repair loop; semantic-evidence and judge calls disable SDK retries. Completed catalog boundaries are persisted as sanitized `tool_runs`, including attempts and bounded input/output evidence. Five-attempt initial execution remains deferred; persisted catalog-attempt observability is implemented.
 
 ### 9.2 Partial failure
 
@@ -241,7 +241,7 @@ The application validates every action and reference before product retrieval, t
 Evaluation data has two scopes. Production persistence stores bounded structural action/tool evidence, correlation IDs, attempts, product IDs/prices and response digests; it excludes credentials, raw provider envelopes, catalog descriptions and unnecessary raw prompts. Explicit local live-evaluation runs may store full prompts and captured catalog payloads under an ignored project-local artifact directory. Those artifacts are retained until deliberately archived or removed by the user and must never be committed or transmitted implicitly.
 - The UI describes interrupted/stale work honestly; it does not claim survival across server shutdown.
 
-## 12. Non-functional requirements
+## 13. Non-functional requirements
 
 - Type-safe boundaries for model and tool data
 - Accessible keyboard navigation and meaningful status announcements
@@ -251,7 +251,7 @@ Evaluation data has two scopes. Production persistence stores bounded structural
 - Deterministic tests for orchestration and ranking where possible
 - Clear fallback behavior when either the catalog or model provider is unavailable
 
-## 13. Open questions
+## 14. Open questions
 
 1. Will evaluation run on a serverless environment where local SQLite is ephemeral?
 2. Which permitted mini/nano model will reviewers configure, and what unavailable-provider behavior should they expect?
@@ -262,7 +262,7 @@ Evaluation data has two scopes. Production persistence stores bounded structural
 7. May the application cache/snapshot the DummyJSON catalog, and how fresh must it be?
 8. Are external evaluation calls allowed during automated review?
 
-## 14. Explicit limitations
+## 15. Explicit limitations
 
 - DummyJSON is a demonstration catalog, not a transactional commerce backend.
 - Recommendations are limited by the supplied fields and catalog quality.
@@ -270,9 +270,9 @@ Evaluation data has two scopes. Production persistence stores bounded structural
 - Local LiteLLM or deterministic fixture results do not guarantee identical hosted-provider behavior.
 - SQLite on one process does not provide distributed coordination or automatic high availability.
 - In-flight work does not continue while the server process is shut down.
-- Initial-call five-attempt retry and persisted tool-attempt observability are authored targets that are not yet complete.
+- Initial-call five-attempt retry is an authored target that is not complete. Persisted catalog-attempt observability exists for captured boundaries, but application model-call/token counts are not exposed uniformly.
 
-## 15. Multilingual conversation and empty-state refinement
+## 16. Multilingual conversation and empty-state refinement
 
 - Bazak responds in the shopper's language for Hebrew and English turns while trusted catalog product fields remain in their source language and render LTR inside RTL conversation chrome.
 - Every new turn starts a new intent scope unless it explicitly carries a validated clarification or retry identity from the previous result. Unknown categories fail honestly instead of falling back to an unrelated catalog category.
@@ -285,11 +285,11 @@ Evaluation data has two scopes. Production persistence stores bounded structural
 - Product grids use the same responsive column policy and card anatomy for every category. Cards stretch without fixed clipping heights, preserve a stable media frame, and keep match reasoning at the bottom of the content column.
 - The application does not expose a local-workspace profile block. Motion is subtle, composite-only, and reduced under `prefers-reduced-motion`.
 
-### 15.1 Explicit non-goal
+### 16.1 Explicit non-goal
 
 A price-picker component is discussion-only and is not part of this implementation slice. Budget refinements continue through natural-language input and existing clarification controls.
 
-## 15.2 Versioned conversation memory
+## 16.2 Versioned conversation memory
 
 - Every terminal turn advances one server-owned `conversation_state` revision in the same SQLite transaction as messages, intents, tool references, product snapshots and `result_json`.
 - The projection contains at most eight active structured outcomes, an unambiguous current focus, the last operation (`add`, `replace`, `refine`, `clarify`, or `select_product`), the last turn ID and update time. When the bound is exceeded, the oldest active outcomes leave model context but remain in immutable turn history.
@@ -299,13 +299,13 @@ A price-picker component is discussion-only and is not part of this implementati
 - Explicit price ordering is authoritative over semantic relevance ordering. `Cheaper` does not invent an unstated price ceiling.
 - Bounded decision events and catalog tool references are persisted without credentials, provider envelopes or catalog descriptions.
 
-## 16. Live-provider QA remediation
+## 17. Live-provider QA remediation
 
 The confirmed scenarios in `QA_LIVE_AI_REPORT_2026-10-30.md` are release regressions. Acceptance requires deterministic coverage for each invariant and a separate opt-in live-provider replay. Provider-plan observability is bounded to structural summaries and must not persist credentials, authorization data, raw provider responses or catalog payloads. Opt-in server diagnostics use one hashed correlation key per conversation/turn and structured stages for request receipt, interpreted plan, follow-up targeting, search constraints, result summaries and errors. Summary mode logs no raw shopper prompt or product titles. Verbose prompt/title content is bounded, development-only, disabled by default and documented explicitly.
 
-## 17. Local semantic-evidence relevance experiment
+## 18. Semantic-evidence relevance stage
 
-This section applies only to `local/semantic-evidence-shadow`; it is not part of the pushed submission baseline.
+This section originated on `local/semantic-evidence-shadow` and now describes the semantic-evidence stage present in the current candidate.
 
 - Deterministic category, price, stock, rating and brand filtering remains authoritative and runs before semantic evaluation.
 - The evaluator accepts a bounded requirement and bounded post-filter catalog candidates, and returns per-product `supported`, `partial`, `contradicted`, or `unknown` verdicts with bounded confidence and a separate relevance score from 0 to 1.
@@ -323,7 +323,7 @@ This section applies only to `local/semantic-evidence-shadow`; it is not part of
 - Provider failure, timeout, or malformed output uses the deterministic lexical/evidence result as a clearly defined fallback. The intent result and UI state disclose that semantic ordering was unavailable and must not claim evidence-tier ordering.
 - Turn-level copy is derived from card-level tiers: if any displayed product is partial or unknown, the response says verified matches appear first and qualified alternatives follow; it never claims every product is verified.
 - Contextual negation such as “not just,” “without paying flagship money,” “not a daytime freshie,” Hebrew `לא סתם`, and `לא זוכרת` is not a brand exclusion. Natural catalog terms such as shoes, basketball shoes, scent, perfume, makeup, lashes, and mascara resolve to the appropriate trusted category when unambiguous.
-- The configured assignment OpenAI provider is used on this local experiment branch without copying or changing its credential. The same provider abstraction remains compatible with LiteLLM/Ollama.
+- The configured assignment provider is used without copying or changing its credential. The same provider abstraction remains compatible with an explicitly configured LiteLLM/Ollama-compatible development endpoint; such runs must not be represented as OpenAI evidence.
 - Fifteen creative ambiguous or colloquial real-catalog prompts are prepared for separate live QA; implementation does not self-certify them.
 # Recovery acceptance addendum — 2026-11-01
 

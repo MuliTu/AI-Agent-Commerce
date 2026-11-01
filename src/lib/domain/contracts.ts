@@ -33,6 +33,3 @@ export type ShoppingIntent = { id: string; goal: string; query: string; constrai
 export type TurnStatus = 'queued' | 'running' | 'completed' | 'partial' | 'failed';
 export type Turn = { id: string; conversationId: string; status: TurnStatus; intents: ShoppingIntent[]; createdAt: string };
 export type Conversation = { id: string; createdAt: string; updatedAt: string };
-export type Message = { id: string; conversationId: string; turnId: string; role: 'user' | 'assistant'; content: string; createdAt: string };
-export type DomainError = { code: 'validation' | 'unavailable' | 'unauthorized' | 'not_found' | 'unknown'; message: string; retryable: boolean };
-export type ToolResult<T> = { ok: true; data: T } | { ok: false; error: DomainError };

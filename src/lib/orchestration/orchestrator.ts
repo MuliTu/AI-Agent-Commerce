@@ -419,6 +419,11 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
       }
       let plan: ExtractedTurnPlan;
       let continuingCheaperClarification = false;
+      let resolvedPendingBudget: {
+        maxPrice: number;
+        selectedCategory: string;
+        candidateCategories: string[];
+      } | undefined;
       if (input.retryIntentId && input.clarification) {
         throw new OrchestrationError('invalid_refinement', 'A turn cannot retry and clarify at the same time.');
       }
@@ -441,6 +446,30 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
         const selectedCategory = input.clarification.field === 'category'
           ? resolveCatalogCategory(input.clarification.value, input.clarification.value, availableCategories)
           : undefined;
+        const pendingBudget = input.previous?.stateActions?.pendingBudgetClarification;
+        if (pendingBudget && pendingBudget.selectorIntentId === input.clarification.intentId) {
+          if (!selectedCategory || !pendingBudget.candidates.some(({ category }) => category === selectedCategory)) {
+            throw new OrchestrationError('invalid_refinement', 'The budget clarification must select one of its persisted product targets.');
+          }
+          resolvedPendingBudget = {
+            maxPrice: pendingBudget.maxPrice,
+            selectedCategory,
+            candidateCategories: pendingBudget.candidates.map(({ category }) => category),
+          };
+          plan = extractedTurnPlanSchema.parse({
+            response: isHebrew
+              ? `החלתי תקציב של $${pendingBudget.maxPrice} על ${selectedCategory} והמשכתי גם את שאר בקשות הקנייה.`
+              : `I applied the $${pendingBudget.maxPrice} budget to ${selectedCategory} and continued the other shopping requests.`,
+            intents: pendingBudget.candidates.map(({ category, intent }) => ({
+              ...intent,
+              constraints: {
+                ...intent.constraints,
+                category,
+                ...(category === selectedCategory ? { maxPrice: pendingBudget.maxPrice } : {}),
+              },
+            })),
+          });
+        } else {
         const selectedPriorIntent = !prior.intent.constraints.category && selectedCategory
           ? previousOutcomes.find(({ intent }) => intent.id !== prior.intent.id
             && intent.constraints.category === selectedCategory)
@@ -456,6 +485,7 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
             status: continuingCheaperClarification ? 'needs_clarification' : 'ready',
           }] : [{ ...update, ...(continuingCheaperClarification ? { status: 'needs_clarification' as const } : {}) }],
         });
+        }
       } else {
         try {
           const rawPlan = await options.extractIntents({
@@ -668,25 +698,49 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
       const activeSearchCount = operations.filter(({ op }) => op === 'search' || op === 'refine_intent').length;
       if (ambiguousBudget && activeSearchCount > 1) {
         const isHebrew = /[\u0590-\u05ff]/u.test(promptResult.data);
+        const maxPrice = explicitUsdMaxPrice(promptResult.data);
+        const candidates = [...executableIntentIndexes].flatMap((index) => {
+          const intent = plan.intents[index];
+          if (!intent?.goal || !intent.query) return [];
+          const category = resolveCatalogCategory(
+            intent.constraints.category,
+            `${intent.goal} ${intent.query} ${intent.constraints.category ?? ''}`,
+            availableCategories,
+          );
+          if (!category) return [];
+          const constraints = { ...intent.constraints, category };
+          delete constraints.maxPrice;
+          return [{ category, intent: { goal: intent.goal, query: intent.query, constraints, status: 'ready' as const } }];
+        });
+        if (maxPrice === undefined || candidates.length !== activeSearchCount
+          || new Set(candidates.map(({ category }) => category)).size !== candidates.length) {
+          throw new OrchestrationError('invalid_plan', 'An ambiguous multi-product budget requires distinct persisted product targets and an explicit USD amount.');
+        }
+        const selectorIntentId = `${input.turnId}:intent:1`;
         const message = isHebrew
           ? 'לא ברור לאיזה מוצר התקציב מתייחס. לאיזה מוצר להחיל אותו?'
           : 'It is unclear which product the budget applies to. Which product should I update?';
         return {
           turnId: input.turnId,
-          status: 'failed',
+          status: 'partial',
           response: message,
           outcomes: [{
             intent: {
-              id: `${input.turnId}:intent:1`, goal: isHebrew ? 'בחירת מוצר לתקציב' : 'Choose a product for the budget',
-              query: promptResult.data, constraints: {}, status: 'needs_clarification',
+              id: selectorIntentId, goal: isHebrew ? 'בחירת מוצר לתקציב' : 'Choose a product for the budget',
+              query: promptResult.data, constraints: { maxPrice }, status: 'needs_clarification',
             },
             products: [],
             clarification: {
               field: 'category', question: message,
-              options: availableCategories.slice(0, 8), reason: 'split',
+              options: candidates.map(({ category }) => category), reason: 'split',
             },
           }],
-          stateActions,
+          stateActions: {
+            ...stateActions,
+            pendingBudgetClarification: {
+              kind: 'ambiguous_multi_intent_budget', selectorIntentId, maxPrice, candidates,
+            },
+          },
         };
       }
       if (plan.operations) {
@@ -1055,7 +1109,11 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
           `${intent.goal} ${intent.query}`,
           availableCategories,
         );
-        const category = explicitPromptCategory ?? (resolvedCategory && (previous.has(intent.id) || isCatalogCategoryGrounded(
+        const persistedPendingCategory = resolvedPendingBudget && requestedCategory
+          && resolvedPendingBudget.candidateCategories.includes(requestedCategory)
+          ? requestedCategory
+          : undefined;
+        const category = persistedPendingCategory ?? explicitPromptCategory ?? (resolvedCategory && (previous.has(intent.id) || isCatalogCategoryGrounded(
           promptResult.data,
           `${intent.goal} ${intent.query}`,
           resolvedCategory,
@@ -1070,12 +1128,15 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
         );
         const preservesPriorBudget = safeDraft.intentId !== undefined
           && previous.get(safeDraft.intentId)?.intent.constraints.maxPrice !== undefined;
+        const preservesResolvedPendingBudget = resolvedPendingBudget !== undefined
+          && category === resolvedPendingBudget.selectedCategory
+          && intent.constraints.maxPrice === resolvedPendingBudget.maxPrice;
         return {
           ...intent,
           constraints: {
             ...intent.constraints,
             ...(cheapOrdering ? { sort: 'price_asc' as const } : {}),
-            ...(!explicitUsdBudget && !preservesPriorBudget ? { maxPrice: undefined } : {}),
+            ...(!explicitUsdBudget && !preservesPriorBudget && !preservesResolvedPendingBudget ? { maxPrice: undefined } : {}),
             ...(category ? { category } : { category: undefined }),
           },
           status: outsideProductCatalog || (requestedCategory !== undefined && !category)
@@ -1083,6 +1144,18 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
             : intent.status,
         };
       });
+      if (resolvedPendingBudget) {
+        const byCategory = new Map(planned.flatMap((intent) =>
+          intent.constraints.category ? [[intent.constraints.category, intent] as const] : []));
+        const hasExactCandidates = planned.length === resolvedPendingBudget.candidateCategories.length
+          && resolvedPendingBudget.candidateCategories.every((category) => byCategory.has(category));
+        const selected = byCategory.get(resolvedPendingBudget.selectedCategory);
+        const leakedBudget = [...byCategory.entries()].some(([category, intent]) =>
+          category !== resolvedPendingBudget?.selectedCategory && intent.constraints.maxPrice !== undefined);
+        if (!hasExactCandidates || selected?.constraints.maxPrice !== resolvedPendingBudget.maxPrice || leakedBudget) {
+          throw new OrchestrationError('invalid_refinement', 'The persisted budget clarification was not preserved exactly before catalog search.');
+        }
+      }
       const cheaperComparisonIntentIds = new Set(planned.flatMap((intent, index) => {
         const price = executablePriceSemantics[index];
         const structured = price?.kind === 'cheaper_than_reference' && price.referenceId === validReferenceId;

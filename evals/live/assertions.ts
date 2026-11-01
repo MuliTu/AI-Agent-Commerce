@@ -152,6 +152,14 @@ export function evaluateObjectiveAssertions(input: AssertionInput): ObjectiveAss
       ? check('catalog-anchored-prices', products.length > 0 && products.every(({ id, price }) => trustedProducts.get(id)?.some((record) => record.price === price)), 'Every returned price must equal the actual catalog response price for that product ID.')
       : assertion('catalog-anchored-prices', 'INCONCLUSIVE', 'Catalog response capture was incomplete.'));
   }
+  for (const categoryBudget of expected.categoryMaxPrice ?? []) {
+    const matching = input.result.outcomes.filter(({ intent }) => intent.constraints.category === categoryBudget.category);
+    checks.push(check(
+      `category-max-price-${categoryBudget.category}`,
+      matching.length > 0 && matching.every(({ intent }) => (intent.constraints.maxPrice ?? null) === categoryBudget.value),
+      `expected ${categoryBudget.category} maxPrice=${categoryBudget.value ?? 'absent'}; actual ${matching.map(({ intent }) => intent.constraints.maxPrice ?? 'absent').join(', ') || 'missing category'}`,
+    ));
+  }
   if (expected.preserveActiveIntentCount) checks.push(check('active-intents-preserved', (input.stateAfter?.activeResult?.outcomes.length ?? 0) >= expected.preserveActiveIntentCount.min, `expected >=${expected.preserveActiveIntentCount.min}, actual ${input.stateAfter?.activeResult?.outcomes.length ?? 0}`));
   if (expected.stateOperation) checks.push(check('state-operation', input.stateAfter?.lastOperation === expected.stateOperation, `expected ${expected.stateOperation}, actual ${input.stateAfter?.lastOperation ?? 'missing'}`));
   if (expected.selectedProductFromPreviousDisplay) {
@@ -163,6 +171,18 @@ export function evaluateObjectiveAssertions(input: AssertionInput): ObjectiveAss
     checks.push(input.catalogCaptureComplete
       ? check('selected-product-from-display', returned !== undefined && sameJson(latestSelected, returned) && exactCatalogMatch, `expected latest persisted selection to match the full returned product and prior catalog record; actual IDs ${products.map(({ id }) => id).join(', ')}`)
       : assertion('selected-product-from-display', 'INCONCLUSIVE', 'Prior catalog capture was incomplete, so historical selection grounding cannot be proven.'));
+  }
+  if (expected.selectedProductsFromPreviousDisplay) {
+    const priorTrusted = rawCatalogProducts(input.priorCatalogCalls ?? []);
+    const allGroundedInPriorDisplay = products.every((product) => (priorTrusted.get(product.id) ?? []).some((record) =>
+      Object.entries(product).every(([key, value]) => sameJson(record[key], value))));
+    checks.push(input.catalogCaptureComplete
+      ? check(
+          'selected-products-from-display',
+          products.length >= expected.selectedProductsFromPreviousDisplay.min && allGroundedInPriorDisplay,
+          `expected >=${expected.selectedProductsFromPreviousDisplay.min} selected products grounded in prior displayed catalog output; actual IDs ${products.map(({ id }) => id).join(', ') || 'none'}`,
+        )
+      : assertion('selected-products-from-display', 'INCONCLUSIVE', 'Prior catalog capture was incomplete, so multi-group historical selections cannot be proven.'));
   }
   if (expected.focusCategory) {
     const focused = input.stateAfter?.activeResult?.outcomes.find(({ intent }) => intent.id === input.stateAfter?.currentFocusIntentId);

@@ -58,6 +58,47 @@ export const liveEvaluationScenarios: EvaluationScenario[] = [
     ],
   },
   {
+    id: 'pending-multi-intent-budget-resolution',
+    description: 'An ambiguous shared budget must remain pending until the shopper chooses a target, then preserve and execute both original searches without leaking the budget.',
+    tags: ['multi-turn', 'clarification', 'budget', 'persistence'],
+    turns: [
+      {
+        id: 'ambiguous-budget',
+        prompt: 'Find me a laptop and a fragrance under $100.',
+        expected: { outcomeCount: { min: 1 }, clarification: 'required', catalogSearches: 'forbidden', stateOperation: 'clarify' },
+      },
+      {
+        id: 'choose-laptop-budget',
+        prompt: 'Apply that budget to the laptop.',
+        clarification: { target: 'first_pending', value: 'laptops' },
+        expected: {
+          outcomeCount: { min: 2 },
+          clarification: 'forbidden',
+          catalogSearches: 'required',
+          categoriesInclude: ['laptops', 'fragrances'],
+          categoryMaxPrice: [{ category: 'laptops', value: 100 }, { category: 'fragrances', value: null }],
+        },
+      },
+    ],
+  },
+  {
+    id: 'multi-group-ordinal-selection',
+    description: 'The second product from each of two displayed lists must resolve from persisted order without a new search.',
+    tags: ['multi-turn', 'multi-intent', 'implicit-reference', 'persistence'],
+    turns: [
+      {
+        id: 'display-two-lists',
+        prompt: 'Show me smartphones and fragrances.',
+        expected: { outcomeCount: { min: 2 }, completedOutcomeCount: { min: 2 }, catalogSearches: 'required', categoriesInclude: ['smartphones', 'fragrances'] },
+      },
+      {
+        id: 'select-second-from-each',
+        prompt: 'Show me the second product from each list.',
+        expected: { outcomeCount: { min: 2 }, returnedProductCount: { min: 2 }, clarification: 'forbidden', catalogSearches: 'forbidden', stateOperation: 'select_product', selectedProductsFromPreviousDisplay: { min: 2 } },
+      },
+    ],
+  },
+  {
     id: 'adversarial-catalog-grounding',
     description: 'A request to fabricate a product must remain grounded in actual catalog tool output.',
     tags: ['adversarial', 'catalog-grounding'],

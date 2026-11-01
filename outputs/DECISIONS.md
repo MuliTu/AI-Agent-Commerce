@@ -7,19 +7,27 @@ This log records current decisions and proposals. “Accepted” means accepted 
 | ID | Decision | Status |
 |---|---|---|
 | D-01 | Next.js and TypeScript | Accepted design |
-| D-02 | Vercel AI SDK with GPT-5.4-mini | Accepted design |
+| D-02 | Vercel AI SDK structured output with GPT-5.4-mini | Implemented live path |
 | D-03 | Single Agent with multi-intent orchestration | Accepted design |
 | D-04 | Catalog-first semantic ranking | Accepted design |
 | D-05 | Adaptive clarification | Accepted design |
 | D-06 | Composable React product UI | Accepted design |
-| D-07 | SQLite server-side persistence and client-independent execution | Proposed/accepted pending scope confirmation |
-| D-08 | Five total attempts for transient failures | Accepted design |
-| D-09 | Vitest, MSW, Playwright, Ollama, then OpenAI | Accepted design |
+| D-07 | SQLite server-side persistence and client-independent execution | Implemented locally with documented process/storage limits |
+| D-08 | Five total attempts for transient failures | Implemented for explicit failed-intent retry; deferred for initial calls |
+| D-09 | Deterministic tests plus opt-in configured-provider evaluation | Implemented |
 | D-10 | Staged delivery with README reflection | Accepted plan |
 | D-11 | Conversation-owned result groups and independent scroll regions | Accepted design |
 | D-12 | Central, one-file-per-system-prompt organization | Accepted design |
 | D-13 | Fail-closed open-vocabulary catalog evidence | Accepted and implemented |
-| D-14 | Model-assisted evidence-tier reranker on the local experiment branch | Active experiment |
+| D-14 | Model-assisted evidence-tier reranker | Implemented in current candidate |
+| D-15 | Versioned conversation-state projection | Implemented |
+| D-16 | Deterministic displayed-product references | Implemented |
+| D-17 | Price intent outranks semantic relevance | Implemented |
+| D-18 | Bounded decision and catalog-boundary persistence | Implemented |
+| D-19 | One ordered semantic action plan | Implemented incrementally |
+| D-20 | Separate price ordering from price comparison | Implemented |
+| D-21 | Environment-bounded evaluation evidence | Implemented |
+| D-22 | Remove unreachable prototypes and retain live boundaries | Implemented locally pending merge |
 
 ## D-01 — Use Next.js with TypeScript
 
@@ -33,11 +41,11 @@ This log records current decisions and proposals. “Accepted” means accepted 
 
 ## D-02 — Use Vercel AI SDK and GPT-5.4-mini
 
-**Context:** The agent must stream interaction, use typed tools, and provide strong reasoning at appropriate latency/cost.
+**Context:** The application needs schema-valid model interpretation while keeping product facts and execution authority at trusted boundaries.
 
-**Decision:** Use Vercel AI SDK as the orchestration/streaming integration and GPT-5.4-mini as the primary hosted model.
+**Decision:** Use Vercel AI SDK structured output with GPT-5.4-mini as the primary hosted model. The live route receives a structured plan and application code invokes catalog boundaries. The earlier model-directed AI SDK tool-loop prototype was never wired into production and has been removed.
 
-**Why:** The SDK provides typed tool and streaming primitives suitable for a Next.js application. GPT-5.4-mini is the chosen balance for this assignment.
+**Why:** The SDK provides schema-constrained provider integration, while application-owned catalog execution keeps IDs, prices, filters, persistence, and recovery deterministic. GPT-5.4-mini is the chosen assignment model. The current route returns terminal JSON; token streaming is not implemented.
 
 **Trade-offs:** Provider availability, model drift, cost, and rate limits require explicit configuration, mocks, bounded evaluation, and graceful errors. Access must be confirmed; the design must not silently substitute a different model.
 
@@ -45,7 +53,7 @@ This log records current decisions and proposals. “Accepted” means accepted 
 
 **Context:** A shopper can ask for several unrelated products in one message.
 
-**Decision:** Keep one shopper-facing agent. Decompose each turn into structured intents and run catalog operations per intent.
+**Decision:** Keep one shopper-facing agent. The model produces one structured multi-intent/action plan; the deterministic orchestrator validates it and runs catalog operations per intent.
 
 **Why:** One agent preserves a coherent conversation and avoids cross-agent coordination overhead. Structured intents still isolate errors and permit concurrent tool work.
 
@@ -77,17 +85,17 @@ This log records current decisions and proposals. “Accepted” means accepted 
 
 **Context:** Products need richer presentation than prose, but model-generated UI/HTML is unsafe and inconsistent.
 
-**Decision:** The model emits validated intent and tool data; the app maps that data to components such as intent sections, product cards, comparisons, and clarification prompts.
+**Decision:** The model emits validated intent/action data but no trusted product or tool result. The app invokes the catalog and maps validated application results to intent sections, product cards, comparisons, and clarification prompts.
 
 **Why:** This improves safety, accessibility, testing, reuse, and visual consistency.
 
-**Trade-offs:** The component/event contract must evolve carefully and accommodate partial streaming states.
+**Trade-offs:** The component/result contract must evolve carefully and accommodate partial success, clarification, empty, failure, and restored states. Token streaming is future work.
 
 ## D-07 — Persist state in server-side SQLite
 
-**Context:** Browser-only state is lost on refresh and ties accepted work to one client. The assignment's exact persistence expectation remains an open question.
+**Context:** Browser-only state is lost on refresh and cannot satisfy the assignment's refresh, saved-conversation, and resume behavior.
 
-**Decision:** Deliberately design for server-side SQLite persistence, stable turn IDs, and server-owned execution status. Confirm whether this is expected scope or an elective production-minded extension.
+**Decision:** Use server-side SQLite persistence, stable turn IDs, and server-owned execution status for the local application.
 
 **Why:** It enables reconnect and cross-client recovery without introducing a larger database stack.
 
@@ -101,7 +109,7 @@ This log records current decisions and proposals. “Accepted” means accepted 
 
 **Context:** Catalog and model calls can fail transiently, but unbounded retries increase cost and latency.
 
-**Decision:** Make at most five total attempts: one initial call and four retries, with capped exponential backoff and jitter.
+**Decision:** Make at most five total attempts for an explicitly retried, retryable failed intent: one call and four retries, with capped exponential backoff and jitter. Do not claim this policy for initial live calls until they use the same wrapper. Structured-plan schema repair is separately bounded at three attempts.
 
 **Why:** The wording is unambiguous, bounded, observable, and testable.
 
@@ -111,11 +119,11 @@ This log records current decisions and proposals. “Accepted” means accepted 
 
 **Context:** Agent applications combine deterministic code with nondeterministic provider behavior.
 
-**Decision:** Use Vitest for domain logic, MSW for boundary simulations, Playwright for user journeys, Ollama for repeatable/local model exercises, and OpenAI last for a smaller real-provider suite.
+**Decision:** Use Vitest for deterministic domain/integration logic, Playwright with an intercepted orchestration boundary for browser journeys, harness-mechanics tests, and an opt-in live suite using the explicitly configured provider plus real DummyJSON. LiteLLM/Ollama-compatible routing is optional development infrastructure, not equivalent evidence for the assignment OpenAI model.
 
 **Why:** Fast tests catch most regressions cheaply; local model runs reduce provider dependence; OpenAI verification checks the actual target integration.
 
-**Trade-offs:** Ollama is not behaviorally identical to GPT-5.4-mini. Model evaluations should use invariants and rubrics rather than brittle exact strings.
+**Trade-offs:** A local-compatible model is not behaviorally identical to GPT-5.4-mini. Model evaluations should record the exact provider/model and use invariants and rubrics rather than brittle exact strings.
 
 ## D-10 — Deliver in stages and treat “another week” as reflection
 
@@ -163,11 +171,11 @@ This log records current decisions and proposals. “Accepted” means accepted 
 
 **Trade-offs:** Unknown synonyms can produce false negatives. Generic evidence extraction is intentionally lexical and conservative. Curated features retain broader reviewed synonyms.
 
-## D-14 — Use evidence tiers for visible semantic reranking on the local experiment branch
+## D-14 — Use evidence tiers for visible semantic reranking
 
 **Context:** Conservative lexical evidence may miss valid paraphrases. The repository already supports hosted OpenAI and a local LiteLLM-compatible Qwen/Ollama route.
 
-**Experimental decision:** On the local-only `local/semantic-evidence-shadow` branch, let the configured assignment OpenAI provider reorder post-filter candidates into truthful evidence tiers: `supported`, `partial`, `unknown`, and internal `contradicted`. Each assessment includes confidence, a separate relevance score, product ID, requirement, and exact trusted catalog evidence. Supported products appear first, partial/related products next with a visible qualification, unknown products last, and contradicted products are excluded. An explicit “only verified” request keeps only supported products.
+**Decision and history:** This began on local-only `local/semantic-evidence-shadow` and is now integrated into the current candidate. The configured provider may reorder post-filter candidates into evidence tiers: `supported`, `partial`, `unknown`, and internal `contradicted`. Each assessment includes confidence, a separate relevance score, product ID, requirement, and exact trusted catalog evidence. Supported products appear first, partial/related products next with a visible qualification, unknown products last, and contradicted products are excluded. An explicit “only verified” request keeps only supported products.
 
 **Why:** Customers benefit when colloquial wording and catalog paraphrases influence ordering, but relevance must not be presented as proof. Tier-first ordering makes “satellite voice calling” stronger than related “satellite SOS messaging” while still allowing the related option to appear honestly for a normal relevance request.
 
@@ -201,7 +209,7 @@ This log records current decisions and proposals. “Accepted” means accepted 
 
 **Development diagnostics decision:** Add structured, opt-in server diagnostics with a hashed per-turn correlation key. Summary mode records only bounded structural metadata; development-only verbose mode may include a truncated shopper prompt and trusted catalog product titles. Both modes exclude credentials, raw provider envelopes, catalog descriptions and database payloads. Always-on raw logging was rejected for privacy; error-only logging was rejected because it cannot explain successful-but-wrong routing decisions.
 
-**Why this branch is separate:** The committed baseline already has independently verified fail-closed behavior. The visible reranker needs labelled live QA before it can be considered for the submission or production path.
+**Historical integration note:** This branch was originally kept separate while the visible reranker underwent labelled live QA. It was later integrated into the current candidate; the original isolation rule is no longer the repository state.
 
 ## D-15 — Persist a versioned projection instead of replaying the transcript
 
@@ -247,9 +255,8 @@ This log records current decisions and proposals. “Accepted” means accepted 
 
 ## Decisions still requiring evidence or confirmation
 
-- Whether server-side persistence is mandatory, optional, or outside scope
 - Whether the review environment supports durable SQLite storage
-- Whether GPT-5.4-mini credentials/access are supplied
+- Which allowed configured model and credentials the review environment supplies
 - The semantic representation and final ranking weights
 - Whether authentication, cart, checkout, or transactional actions are required
 
@@ -276,6 +283,14 @@ This log records current decisions and proposals. “Accepted” means accepted 
 **Judge independence:** The live harness accepts an explicit judge provider/model configuration while defaulting to the already configured application provider/model. Artifacts truthfully record execution independence, provider independence and model independence separately. A different model on the same provider is model-independent but not provider-independent; the default is neither. Deterministic failures remain authoritative in every configuration.
 
 **Limits:** A distinct judge may improve calibration but adds another paid call, latency and model-specific variance per turn. It does not make a subjective verdict objective. No distinct credential or provider is provisioned by the harness; operators must explicitly supply an already authorized configuration, and absence/unavailability remains `INCONCLUSIVE`.
+
+## D-22 — Remove unreachable prototypes and retain live boundaries
+
+**Decision:** Remove code only when import-graph and entry-point review prove that it has no production, evaluation, script, dynamic-framework, or required public-contract path. This removes the unconnected model tool loop, process-local snapshot cache, in-memory idempotency prototype, unused version constant, stale type aliases and stale CSS. Tests dedicated solely to those deleted prototypes are removed with them; behavioral tests for the live catalog handlers, SQLite idempotency, retry policy, fixtures, routes and UI remain.
+
+**Why:** Barrel re-exports kept the uncalled model tool loop and its prompt on the production dependency/export surface even though no runtime entry invoked them. The cache and in-memory registry duplicated no live behavior and were referenced only by their own tests. Keeping them inflated the apparent architecture and made documentation misleading.
+
+**Safety boundary:** Next route/page/layout entry points, Vitest-config evaluation entries, test seams, shared catalog handlers, provider model/error boundaries, product snapshots and historical evaluation evidence remain even when ordinary text search shows few callers. Ambiguous or future-looking code is retained unless reachability and requirements evidence are conclusive.
 # Recovery decision — 2026-11-01
 
 The missing temporary worktree could not be recovered byte-for-byte from Git objects, IDE history, snapshots, task artifacts, or sourcemaps. Submission-critical behavior was reconstructed from commit `ea607c2`, durable evaluation artifacts, retained review evidence, and new regression tests in a stable project-local worktree. Reports must call this a reconstruction, not an exact recovery.

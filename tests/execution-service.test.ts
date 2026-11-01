@@ -1017,6 +1017,58 @@ describe('persisted display-group resolution regressions', () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
+  it('restores a complete pending multi-intent budget clarification after reopening the database', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'bazak-pending-budget-'));
+    const path = join(directory, 'commerce.sqlite');
+    const pending = {
+      turnId: 'clarify', status: 'partial' as const,
+      response: 'Which product should receive the budget?',
+      outcomes: [{
+        intent: { id: 'selector', goal: 'Choose a product for the budget', query: 'laptop and perfume under $100', constraints: { maxPrice: 100 }, status: 'needs_clarification' as const },
+        products: [],
+        clarification: { field: 'category' as const, question: 'Which product?', options: ['laptops', 'fragrances'], reason: 'split' as const },
+      }],
+      stateActions: {
+        pauseIntentIds: [], resumeIntentIds: [],
+        pendingBudgetClarification: {
+          kind: 'ambiguous_multi_intent_budget' as const,
+          selectorIntentId: 'selector', maxPrice: 100,
+          candidates: [
+            { category: 'laptops', intent: { goal: 'Find a laptop', query: 'laptop', constraints: { category: 'laptops' }, status: 'ready' as const } },
+            { category: 'fragrances', intent: { goal: 'Find a perfume', query: 'perfume', constraints: { category: 'fragrances' }, status: 'ready' as const } },
+          ],
+        },
+      },
+    };
+    const firstRepository = new CommerceRepository(path);
+    const firstService = new ConversationExecutionService(firstRepository, vi.fn<RunOrchestration>(async () => pending));
+    await firstService.execute({ conversationId: 'pending-budget', turnId: 'clarify', prompt: 'Find a laptop and a perfume under $100' });
+    firstRepository.close();
+
+    const reopened = new CommerceRepository(path);
+    const resumedRunner = vi.fn<RunOrchestration>(async (input) => {
+      expect(input.previous?.stateActions?.pendingBudgetClarification).toEqual(pending.stateActions.pendingBudgetClarification);
+      expect(input.clarification).toEqual({ intentId: 'selector', field: 'category', value: 'laptops' });
+      return {
+        turnId: input.turnId, status: 'completed', response: 'Continued both requests.', outcomes: [
+          { intent: { id: 'laptop', goal: 'Find a laptop', query: 'laptop', constraints: { category: 'laptops', maxPrice: 100 }, status: 'completed' }, products: [] },
+          { intent: { id: 'perfume', goal: 'Find a perfume', query: 'perfume', constraints: { category: 'fragrances' }, status: 'completed' }, products: [ranked(9, 'Perfume', 'fragrances')] },
+        ],
+      };
+    });
+    const restoredService = new ConversationExecutionService(reopened, resumedRunner);
+    const resolved = await restoredService.execute({
+      conversationId: 'pending-budget', turnId: 'resolve', prompt: 'laptops',
+      clarification: { intentId: 'selector', field: 'category', value: 'laptops' },
+    });
+    expect(resolved.outcomes.map(({ intent }) => intent.constraints)).toEqual([
+      { category: 'laptops', maxPrice: 100 }, { category: 'fragrances' },
+    ]);
+    expect(resumedRunner).toHaveBeenCalledOnce();
+    reopened.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+
   it('selects from several explicit historical lists and names only lists missing the requested position', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'bazak-several-history-'));
     const repository = new CommerceRepository(join(directory, 'commerce.sqlite'));

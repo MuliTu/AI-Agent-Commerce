@@ -52,8 +52,10 @@ describe('app-owned product UI', () => {
     const html = renderToStaticMarkup(<ClarificationPrompt question="Choose" options={['Price','Rating']} />);
     expect(html.match(/type="radio"/g)).toHaveLength(2); expect(html).toContain('<fieldset'); expect(html).toContain('Clarification choices');
   });
-  it('labels each intent and exposes completion state', () => {
-    const html = renderToStaticMarkup(<IntentSection title="Work laptop" summary="One result" status="completed" grouped={false}><p>Content</p></IntentSection>);
-    expect(html).toContain('aria-labelledby="intent-work-laptop"'); expect(html).toContain('Options for this goal');
+  it('labels each intent accessibly without rendering the model-authored title', () => {
+    const html = renderToStaticMarkup(<IntentSection summary="One result" status="completed" grouped={false}><p>Content</p></IntentSection>);
+    expect(html).toContain('aria-label="Options for this goal"');
+    expect(html).toContain('Options for this goal');
+    expect(html).not.toContain('<h2');
   });
 });

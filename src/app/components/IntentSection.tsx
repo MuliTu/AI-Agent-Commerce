@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react';
 
 type Props = {
-  title: string;
   summary: string;
   status: 'loading' | 'completed' | 'empty' | 'failed';
   grouped: boolean;
@@ -16,13 +15,12 @@ const labels: Record<Props['status'], string> = {
   failed: 'I couldn’t finish this search',
 };
 
-export function IntentSection({ title, summary, status, grouped, locale = 'en', children }: Props) {
-  const id = `intent-${title.replaceAll(' ', '-').toLowerCase()}`;
+export function IntentSection({ summary, status, grouped, locale = 'en', children }: Props) {
   const hebrewLabels: typeof labels = { loading: 'מחפש', completed: 'אפשרויות לבקשה הזאת', empty: 'לא נמצאו אפשרויות מתאימות', failed: 'לא הצלחתי להשלים את החיפוש' };
-  return <section className={`intent ${grouped ? 'intent--grouped' : 'intent--single'}`} aria-labelledby={id}>
+  const statusLabel = (locale === 'he' ? hebrewLabels : labels)[status];
+  return <section className={`intent ${grouped ? 'intent--grouped' : 'intent--single'}`} aria-label={statusLabel}>
     <header className="intent__header">
-      <p className="intent__status">{(locale === 'he' ? hebrewLabels : labels)[status]}</p>
-      <h2 id={id}>{title}</h2>
+      <p className="intent__status">{statusLabel}</p>
       <p>{summary}</p>
     </header>
     {children}

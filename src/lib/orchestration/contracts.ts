@@ -168,6 +168,23 @@ const semanticProductRelevanceSchema = z.object({
   }).strict()).max(4),
 }).strict();
 
+const pendingBudgetClarificationSchema = z.object({
+  kind: z.literal('ambiguous_multi_intent_budget'),
+  selectorIntentId: z.string().trim().min(1),
+  maxPrice: z.number().nonnegative(),
+  candidates: z.array(z.object({
+    category: z.string().trim().min(1),
+    intent: z.object({
+      goal: z.string().trim().min(1),
+      query: z.string().trim().min(1),
+      constraints: intentConstraintsSchema,
+      status: z.literal('ready'),
+    }).strict(),
+  }).strict()).min(2).max(8),
+}).strict();
+
+export type PendingBudgetClarification = z.infer<typeof pendingBudgetClarificationSchema>;
+
 export const orchestrationResultSchema = z.object({
   turnId: z.string().trim().min(1),
   status: z.enum(['queued', 'running', 'completed', 'partial', 'failed']),
@@ -198,13 +215,12 @@ export const orchestrationResultSchema = z.object({
     pauseIntentIds: z.array(z.string().trim().min(1)).default([]),
     resumeIntentIds: z.array(z.string().trim().min(1)).default([]),
     selectedProduct: z.boolean().optional(),
+    pendingBudgetClarification: pendingBudgetClarificationSchema.optional(),
   }).strict().optional(),
 }).strict();
 
 export type ExtractedTurnPlan = z.infer<typeof extractedTurnPlanSchema>;
 export type ExtractedIntent = z.infer<typeof extractedIntentSchema>;
-export type SemanticOperation = z.infer<typeof semanticOperationSchema>;
-export type PriceSemantics = z.infer<typeof priceSemanticsSchema>;
 
 export type IntentOutcome = {
   intent: ShoppingIntent;
@@ -224,7 +240,12 @@ export type OrchestrationResult = {
   status: TurnStatus;
   response: string;
   outcomes: IntentOutcome[];
-  stateActions?: { pauseIntentIds: string[]; resumeIntentIds: string[]; selectedProduct?: boolean };
+  stateActions?: {
+    pauseIntentIds: string[];
+    resumeIntentIds: string[];
+    selectedProduct?: boolean;
+    pendingBudgetClarification?: PendingBudgetClarification;
+  };
 };
 
 export type IntentExtractionContext = {

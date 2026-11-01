@@ -1,12 +1,7 @@
-import { tool } from 'ai';
 import type { CatalogCategory, CatalogPage } from '../catalog';
 import { productSchema, type Product } from '../domain/contracts';
 import {
-  getProductInputSchema,
-  getProductOutputSchema,
-  listCategoriesInputSchema,
   listCategoriesOutputSchema,
-  searchCatalogInputSchema,
   searchCatalogOutputSchema,
   type GetProductInput,
   type SearchCatalogInput,
@@ -79,29 +74,5 @@ export function createCatalogToolHandlers(client: AgentCatalogClient) {
         throw toCatalogAgentError(error);
       }
     },
-  };
-}
-
-export function createCatalogTools(client: AgentCatalogClient) {
-  const handlers = createCatalogToolHandlers(client);
-  return {
-    searchCatalog: tool({
-      description: 'Search the trusted catalog for products matching a shopper query.',
-      inputSchema: searchCatalogInputSchema,
-      outputSchema: searchCatalogOutputSchema,
-      execute: handlers.searchCatalog,
-    }),
-    getProduct: tool({
-      description: 'Load one trusted catalog product by its positive integer ID.',
-      inputSchema: getProductInputSchema,
-      outputSchema: getProductOutputSchema,
-      execute: handlers.getProduct,
-    }),
-    listCategories: tool({
-      description: 'List trusted catalog categories for resolving category ambiguity.',
-      inputSchema: listCategoriesInputSchema,
-      outputSchema: listCategoriesOutputSchema,
-      execute: handlers.listCategories,
-    }),
   };
 }

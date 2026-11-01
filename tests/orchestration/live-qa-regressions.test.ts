@@ -483,25 +483,114 @@ describe('live QA functional regressions', () => {
       response: 'searching',
       intents: [
         { goal: 'phone', query: 'phone', constraints: { category: 'smartphones' } },
-        { goal: 'fragrance', query: 'fragrance', constraints: { category: 'fragrances', maxPrice: 300 } },
+        { goal: 'fragrance', query: 'fragrance', constraints: { category: 'fragrances', maxPrice: 250 } },
       ],
       operations: [{ op: 'search', intentIndex: 0 }, { op: 'search', intentIndex: 1 }],
       priceSemantics: [{ kind: 'none' }, { kind: 'none' }],
     }));
-    const result = await createIntentOrchestrator({
-      catalog: catalog(),
+    const client = catalog();
+    const orchestrator = createIntentOrchestrator({
+      catalog: client,
       extractIntents,
-    }).run({
+    });
+    const result = await orchestrator.run({
       turnId: 'ambiguous-budget',
       conversationId: 'qa',
-      prompt: 'Find a phone and a fragrance under $300',
+      prompt: 'Find a phone and a fragrance under $250',
     });
 
     expect(extractIntents).toHaveBeenCalledOnce();
     expect(result).toMatchObject({
-      status: 'failed',
-      outcomes: [{ intent: { status: 'needs_clarification' }, clarification: { reason: 'split' } }],
+      status: 'partial',
+      outcomes: [{
+        intent: { status: 'needs_clarification', constraints: { maxPrice: 250 } },
+        clarification: { reason: 'split', options: ['smartphones', 'fragrances'] },
+      }],
+      stateActions: {
+        pendingBudgetClarification: {
+          maxPrice: 250,
+          candidates: [
+            { category: 'smartphones', intent: { constraints: { category: 'smartphones' } } },
+            { category: 'fragrances', intent: { constraints: { category: 'fragrances' } } },
+          ],
+        },
+      },
     });
     expect(result.response).toBe('It is unclear which product the budget applies to. Which product should I update?');
+
+    await expect(orchestrator.run({
+      turnId: 'invalid-budget-target', conversationId: 'qa', prompt: 'kitchen accessories', previous: result,
+      clarification: {
+        intentId: result.outcomes[0].intent.id,
+        field: 'category',
+        value: 'kitchen-accessories',
+      },
+    })).rejects.toMatchObject({ code: 'invalid_refinement' });
+    expect(client.listProductsByCategory).not.toHaveBeenCalled();
+
+    const resolved = await orchestrator.run({
+      turnId: 'resolved-budget', conversationId: 'qa', prompt: 'smartphones', previous: result,
+      clarification: {
+        intentId: result.outcomes[0].intent.id,
+        field: 'category',
+        value: 'smartphones',
+      },
+    });
+
+    expect(extractIntents).toHaveBeenCalledOnce();
+    expect(resolved.status).toBe('completed');
+    expect(resolved.outcomes.map(({ intent }) => ({
+      category: intent.constraints.category,
+      maxPrice: intent.constraints.maxPrice,
+    }))).toEqual([
+      { category: 'smartphones', maxPrice: 250 },
+      { category: 'fragrances', maxPrice: undefined },
+    ]);
+    expect(resolved.outcomes[0].products.map(({ product }) => product.id)).toEqual([2]);
+    expect(resolved.outcomes[1].products.map(({ product }) => product.id)).toEqual([3]);
+    expect(client.listProductsByCategory).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps both original searches when a selected target has no products within the persisted budget', async () => {
+    const laptop: Product = {
+      id: 78, title: 'Expensive Laptop', description: 'Laptop', category: 'laptops',
+      price: 1_399, rating: 4.5, stock: 5, tags: ['laptop'], brand: 'Catalog PC', images: [],
+    };
+    const client = catalog();
+    client.listCategories.mockResolvedValue([
+      ...await client.listCategories(),
+      { slug: 'laptops', name: 'Laptops', url: 'catalog://laptops' },
+    ]);
+    client.listProductsByCategory.mockImplementation(async (category: string) =>
+      page(category === 'laptops' ? [laptop] : products.filter((product) => product.category === category)));
+    const extractIntents = vi.fn(async () => ({
+      response: 'searching',
+      intents: [
+        { goal: 'Find a laptop', query: 'laptop', constraints: { category: 'laptops' } },
+        { goal: 'Find a perfume', query: 'perfume', constraints: { category: 'fragrances', maxPrice: 100 } },
+      ],
+      operations: [{ op: 'search', intentIndex: 0 }, { op: 'search', intentIndex: 1 }],
+      priceSemantics: [{ kind: 'none' }, { kind: 'none' }],
+    }));
+    const orchestrator = createIntentOrchestrator({ catalog: client, extractIntents });
+    const pending = await orchestrator.run({
+      turnId: 'manual-ambiguous', conversationId: 'qa', prompt: 'Find a laptop and a perfume under $100',
+    });
+    const resolved = await orchestrator.run({
+      turnId: 'manual-resolved', conversationId: 'qa', prompt: 'laptops', previous: pending,
+      clarification: { intentId: pending.outcomes[0].intent.id, field: 'category', value: 'laptops' },
+    });
+
+    expect(extractIntents).toHaveBeenCalledOnce();
+    expect(resolved.outcomes.map(({ intent }) => ({
+      category: intent.constraints.category, maxPrice: intent.constraints.maxPrice,
+    }))).toEqual([
+      { category: 'laptops', maxPrice: 100 },
+      { category: 'fragrances', maxPrice: undefined },
+    ]);
+    expect(resolved.outcomes[0].products).toEqual([]);
+    expect(resolved.outcomes[1].products.map(({ product }) => product.id)).toEqual([3]);
+    expect(client.listProductsByCategory).toHaveBeenCalledWith('laptops', expect.any(Object));
+    expect(client.listProductsByCategory).toHaveBeenCalledWith('fragrances', expect.any(Object));
   });
 });
