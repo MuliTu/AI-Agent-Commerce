@@ -263,6 +263,55 @@ describe('ConversationExecutionService', () => {
     repository.close();
   });
 
+  it('focuses a changed clarification and later refines a completed sibling without reviving clarification copy', async () => {
+    const repository = new CommerceRepository(databasePath());
+    const completedIntent = (id: string, category: string, maxPrice: number) => ({
+      intent: { id, goal: category, query: category, constraints: { category, maxPrice }, status: 'completed' as const },
+      products: [],
+    });
+    const perfumeQuestion = {
+      intent: {
+        id: 'perfume', goal: 'fragrances', query: 'cheaper fragrances',
+        constraints: { category: 'fragrances', maxPrice: 100, sort: 'price_asc' as const },
+        status: 'needs_clarification' as const,
+      },
+      products: [],
+      clarification: {
+        field: 'maxPrice' as const, question: 'Maximum?', options: ['Under $50', 'Under $75'], reason: 'requested' as const,
+      },
+    };
+    const runner = vi.fn(async (input: { turnId: string }) => {
+      if (input.turnId === 'turn-1') return {
+        turnId: input.turnId, status: 'completed' as const, response: 'Found both.',
+        outcomes: [completedIntent('phones', 'smartphones', 300), completedIntent('perfume', 'fragrances', 100)],
+      };
+      if (input.turnId === 'turn-2') return {
+        turnId: input.turnId, status: 'partial' as const, response: 'Maximum?',
+        outcomes: [completedIntent('phones', 'smartphones', 300), perfumeQuestion],
+      };
+      return {
+        turnId: input.turnId, status: 'partial' as const, response: 'Found phones.',
+        outcomes: [perfumeQuestion, completedIntent('phones', 'smartphones', 250)],
+      };
+    });
+    const service = new ConversationExecutionService(repository, runner, () => '2026-10-28T11:00:00.000Z');
+
+    await service.execute({ conversationId: 'focus-transition', turnId: 'turn-1', prompt: 'Find both' });
+    await service.execute({ conversationId: 'focus-transition', turnId: 'turn-2', prompt: 'Show me cheaper perfumes' });
+    expect(repository.getConversationState('focus-transition')).toMatchObject({
+      revision: 2, currentFocusIntentId: 'perfume', lastOperation: 'clarify',
+    });
+    await service.execute({ conversationId: 'focus-transition', turnId: 'turn-3', prompt: 'Go back to smartphones' });
+    expect(repository.getConversationState('focus-transition')).toMatchObject({
+      revision: 3, currentFocusIntentId: 'phones', lastOperation: 'refine',
+      activeResult: { outcomes: [
+        { intent: { id: 'perfume', status: 'needs_clarification' } },
+        { intent: { id: 'phones', status: 'completed', constraints: { maxPrice: 250 } } },
+      ] },
+    });
+    repository.close();
+  });
+
   it('bounds active model context while retaining the complete turn result', async () => {
     const repository = new CommerceRepository(databasePath());
     const runner = vi.fn(async (input: { turnId: string; previous?: OrchestrationResult }) => {

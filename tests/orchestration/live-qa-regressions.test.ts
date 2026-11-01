@@ -163,7 +163,7 @@ describe('live QA functional regressions', () => {
     ]));
 
     const selector = cheaperTurn.outcomes.find(({ intent }) => intent.status === 'needs_clarification');
-    const selected = await orchestrator.run({
+    const selectedCategory = await orchestrator.run({
       turnId: 'selected-cheaper-turn', conversationId: 'same-conversation',
       prompt: 'Fragrances', previous: {
         ...cheaperTurn,
@@ -171,11 +171,147 @@ describe('live QA functional regressions', () => {
       },
       clarification: { intentId: selector!.intent.id, field: 'category', value: 'Fragrances' },
     });
-    expect(selected.outcomes.map(({ intent }) => intent.constraints.category).sort())
-      .toEqual(['fragrances', 'smartphones']);
-    expect(selected.outcomes.find(({ intent }) => intent.constraints.category === 'fragrances')?.intent.constraints.sort)
-      .toBe('price_asc');
-    expect(selected.outcomes.some(({ intent }) => intent.id === selector!.intent.id)).toBe(false);
+    const priceQuestion = selectedCategory.outcomes.find(({ intent }) => intent.status === 'needs_clarification');
+    expect(priceQuestion?.clarification).toMatchObject({ field: 'maxPrice' });
+  });
+
+  it('asks for an explicit price threshold for named cheaper options without a selected product', async () => {
+    const orchestrator = createIntentOrchestrator({
+      catalog: catalog(),
+      extractIntents: async ({ prompt, previousIntents }) => prompt === 'Find smartphone' ? ({
+        response: 'found phone',
+        intents: [{ goal: 'phone', query: 'phone', constraints: { category: 'smartphones' } }],
+      }) : prompt.startsWith('Also') ? ({
+        response: 'found fragrance',
+        intents: [{ goal: 'fragrance', query: 'fragrance', constraints: { category: 'fragrances', maxPrice: 100 } }],
+      }) : ({
+        response: 'sorted perfume',
+        intents: [{
+          intentId: previousIntents.find(({ constraints }) => constraints.category === 'fragrances')?.id,
+          constraints: { category: 'fragrances', sort: 'price_asc' as const },
+        }],
+      }),
+    });
+    const phone = await orchestrator.run({
+      turnId: 'named-cheaper-phone', conversationId: 'named-cheaper', prompt: 'Find smartphone',
+    });
+    const first = await orchestrator.run({
+      turnId: 'named-cheaper-first', conversationId: 'named-cheaper',
+      prompt: 'Also find perfumes under $100', previous: phone,
+    });
+    expect(first.outcomes.map(({ intent }) => intent.constraints.category)).toEqual(['smartphones', 'fragrances']);
+    const result = await orchestrator.run({
+      turnId: 'named-cheaper-second', conversationId: 'named-cheaper',
+      prompt: 'Show me cheaper perfumes', previous: first,
+    });
+
+    expect(result.status).toBe('partial');
+    const fragranceQuestion = result.outcomes.find(({ intent }) => intent.constraints.category === 'fragrances');
+    expect(fragranceQuestion?.products).toEqual([]);
+    expect(fragranceQuestion?.clarification).toMatchObject({
+      field: 'maxPrice',
+      question: 'What maximum price should I use for the cheaper options?',
+      options: ['Under $50', 'Under $75', 'Under $90'],
+    });
+  });
+
+  it.each([
+    { previous: true, prompt: 'Show me cheaper perfumes under $50' },
+    { previous: false, prompt: 'Find cheaper perfumes under $50' },
+  ])('executes an explicit comparative budget without asking for it again: $prompt', async ({ previous, prompt }) => {
+    const client = catalog();
+    const orchestrator = createIntentOrchestrator({
+      catalog: client,
+      extractIntents: async ({ prompt: current, previousIntents }) => ({
+        response: 'searched',
+        intents: [{
+          ...(previousIntents[0] ? { intentId: previousIntents[0].id } : {}),
+          goal: current,
+          query: 'perfume',
+          constraints: { category: 'fragrances', maxPrice: current.includes('$50') ? 50 : 100, sort: 'price_asc' as const },
+        }],
+      }),
+    });
+    const prior = previous ? await orchestrator.run({
+      turnId: `explicit-budget-prior-${prompt}`, conversationId: prompt,
+      prompt: 'Find perfumes under $100',
+    }) : undefined;
+    const result = await orchestrator.run({
+      turnId: `explicit-budget-${prompt}`, conversationId: prompt, prompt, previous: prior,
+    });
+
+    expect(result.status).toBe('completed');
+    expect(result.outcomes).toHaveLength(1);
+    expect(result.outcomes[0]).toMatchObject({
+      intent: { status: 'completed', constraints: { category: 'fragrances', maxPrice: 50, sort: 'price_asc' } },
+    });
+    expect(result.outcomes[0]).not.toHaveProperty('clarification');
+    expect(client.listProductsByCategory).toHaveBeenLastCalledWith('fragrances', expect.objectContaining({ limit: 100 }));
+  });
+
+  it.each([
+    [10, ['Under $5', 'Under $7.5', 'Under $9']],
+    [5, ['Under $2.5', 'Under $3.75', 'Under $4.5']],
+    [1, ['Under $0.5', 'Under $0.75', 'Under $0.9']],
+  ])('offers valid cheaper thresholds below a low $%s ceiling', async (ceiling, expectedOptions) => {
+    const orchestrator = createIntentOrchestrator({
+      catalog: catalog(),
+      extractIntents: async ({ prompt, previousIntents }) => ({
+        response: 'searched',
+        intents: [{
+          ...(previousIntents[0] ? { intentId: previousIntents[0].id } : {}),
+          goal: prompt,
+          query: 'perfume',
+          constraints: { category: 'fragrances', maxPrice: ceiling },
+        }],
+      }),
+    });
+    const prior = await orchestrator.run({
+      turnId: `low-ceiling-${ceiling}-prior`, conversationId: `low-ceiling-${ceiling}`,
+      prompt: `Find perfumes under $${ceiling}`,
+    });
+    const question = await orchestrator.run({
+      turnId: `low-ceiling-${ceiling}-question`, conversationId: `low-ceiling-${ceiling}`,
+      prompt: 'Show me cheaper perfumes', previous: prior,
+    });
+    const pending = question.outcomes.find(({ intent }) => intent.status === 'needs_clarification');
+
+    expect(pending?.clarification?.options).toEqual(expectedOptions);
+    expect(new Set(pending?.clarification?.options).size).toBeGreaterThanOrEqual(2);
+    if (ceiling === 10) {
+      const answered = await orchestrator.run({
+        turnId: 'low-ceiling-10-answer', conversationId: 'low-ceiling-10',
+        prompt: expectedOptions[0], previous: question,
+        clarification: { intentId: pending!.intent.id, field: 'maxPrice', value: expectedOptions[0] },
+      });
+      expect(answered.outcomes.find(({ intent }) => intent.id === pending!.intent.id)).toMatchObject({
+        intent: { status: 'completed', constraints: { category: 'fragrances', maxPrice: 5 } },
+      });
+    }
+  });
+
+  it('returns an honest empty result when an existing zero ceiling has no lower valid threshold', async () => {
+    const orchestrator = createIntentOrchestrator({
+      catalog: catalog(),
+      extractIntents: async ({ prompt, previousIntents }) => ({
+        response: 'searched',
+        intents: [{
+          ...(previousIntents[0] ? { intentId: previousIntents[0].id } : {}),
+          goal: prompt, query: 'perfume', constraints: { category: 'fragrances', maxPrice: 0 },
+        }],
+      }),
+    });
+    const prior = await orchestrator.run({
+      turnId: 'zero-ceiling-prior', conversationId: 'zero-ceiling', prompt: 'Find perfumes under $0',
+    });
+    const result = await orchestrator.run({
+      turnId: 'zero-ceiling-cheaper', conversationId: 'zero-ceiling',
+      prompt: 'Show me cheaper perfumes', previous: prior,
+    });
+
+    expect(result.status).toBe('completed');
+    expect(result.outcomes[0]).toMatchObject({ intent: { status: 'completed' }, products: [] });
+    expect(result.outcomes[0]).not.toHaveProperty('clarification');
   });
 
   it('targets an explicitly named definite Hebrew product without asking ambiguity', async () => {

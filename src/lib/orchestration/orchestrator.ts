@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isDeepStrictEqual } from 'node:util';
 import { AgentBoundaryError, createCatalogToolHandlers, type AgentCatalogClient } from '../agent';
 import type { Constraints, Product, ShoppingIntent, TurnStatus } from '../domain/contracts';
 import { rankCatalogProducts } from '../ranking';
@@ -14,6 +15,7 @@ import {
   type OrchestrationResult,
 } from './contracts';
 import { evaluateClarification, selectTurnClarification } from './clarification';
+import type { Clarification } from './clarification';
 import { analyzeConstraintSemantics, type ConstraintSemanticIssue } from './constraint-semantics';
 import {
   filterProductsByFeatureEvidence,
@@ -219,6 +221,30 @@ function turnStatus(outcomes: IntentOutcome[]): TurnStatus {
   return 'running';
 }
 
+function cheaperPriceClarification(
+  products: IntentOutcome['products'],
+  isHebrew: boolean,
+  existingMaxPrice?: number,
+): Clarification {
+  const prices = [...new Set(products.map(({ product }) => product.price))].sort((left, right) => left - right);
+  const middle = prices.length > 0 ? prices[Math.floor((prices.length - 1) / 2)] : 100;
+  const rounded = Math.max(25, Math.ceil(middle / 25) * 25);
+  const suggestedPrices = existingMaxPrice === undefined
+    ? [rounded, rounded * 2, rounded * 4]
+    : [0.5, 0.75, 0.9].map((ratio) => Number((existingMaxPrice * ratio).toPrecision(6)));
+  const options = [...new Set(suggestedPrices)]
+    .filter((price) => existingMaxPrice === undefined || price < existingMaxPrice)
+    .map((price) => `Under $${price}`);
+  return {
+    field: 'maxPrice',
+    question: isHebrew
+      ? 'מה המחיר המרבי שייחשב זול יותר עבורך?'
+      : 'What maximum price should I use for the cheaper options?',
+    options,
+    reason: 'requested',
+  };
+}
+
 function shopperSafeResponse(outcomes: IntentOutcome[], isHebrew: boolean): string {
   const unsupportedConstraint = outcomes.find(({ error }) => error?.code === 'unsupported_constraint');
   if (unsupportedConstraint?.error) return unsupportedConstraint.error.message;
@@ -387,6 +413,7 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
         }
       }
       let plan: ExtractedTurnPlan;
+      let continuingCheaperClarification = false;
       if (input.retryIntentId && input.clarification) {
         throw new OrchestrationError('invalid_refinement', 'A turn cannot retry and clarify at the same time.');
       }
@@ -413,13 +440,16 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
           ? previousOutcomes.find(({ intent }) => intent.id !== prior.intent.id
             && intent.constraints.category === selectedCategory)
           : undefined;
+        continuingCheaperClarification = input.clarification.field === 'category'
+          && /(?:\bcheaper\b|(?:יותר\s+זול|זול\s+יותר))/iu.test(`${prior.intent.goal} ${prior.intent.query}`);
+        const update = clarificationUpdate(input.clarification, prior);
         plan = extractedTurnPlanSchema.parse({
           response: isHebrew ? `החלתי את ${input.clarification.value} על בקשת הקנייה שבחרת.` : `I applied the update to the selected ${input.clarification.value} request.`,
           intents: selectedPriorIntent ? [{
             intentId: selectedPriorIntent.intent.id,
-            constraints: prior.intent.constraints,
-            status: 'ready',
-          }] : [clarificationUpdate(input.clarification, prior)],
+            constraints: { ...prior.intent.constraints, ...(selectedCategory ? { category: selectedCategory } : {}) },
+            status: continuingCheaperClarification ? 'needs_clarification' : 'ready',
+          }] : [{ ...update, ...(continuingCheaperClarification ? { status: 'needs_clarification' as const } : {}) }],
         });
       } else {
         try {
@@ -495,6 +525,10 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
         && isConstraintOnlyFollowUp(promptResult.data, availableCategories));
       const referencedCheaperComparison = Boolean(displayedReference
         && /(?:\bcheaper\b|(?:יותר\s+זול|זול\s+יותר))/iu.test(promptResult.data));
+      const requiresCheaperPriceClarification = !displayedReference
+        && explicitUsdMaxPrice(promptResult.data) === undefined
+        && (continuingCheaperClarification
+          || /(?:\bcheaper\b|(?:יותר\s+זול|זול\s+יותר))/iu.test(promptResult.data));
       const namedCompoundCategories = displayedReference
         ? explicitPromptCategories(promptResult.data, availableCategories, resolveCatalogCategory)
           .filter((category) => category !== displayedReference.product.category)
@@ -638,6 +672,20 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
           constraints: deterministicBudget === undefined ? {} : { maxPrice: deterministicBudget },
           status: 'needs_clarification' as const,
         }]
+        : requiresCheaperPriceClarification && followUpTarget.kind === 'single'
+          ? [{
+            ...plan.intents[0],
+            intentId: followUpTarget.intentId,
+            constraints: {
+              ...plan.intents[0].constraints,
+              ...(previous.get(followUpTarget.intentId)?.intent.constraints.category
+                ? { category: previous.get(followUpTarget.intentId)!.intent.constraints.category }
+                : {}),
+            },
+            status: 'needs_clarification' as const,
+          }]
+          : requiresCheaperPriceClarification && previousProductOutcomes.length === 0
+            ? plan.intents.map((intent) => ({ ...intent, status: 'needs_clarification' as const }))
         : followUpTarget.kind === 'all' && plan.intents.length === 1
           ? followUpTarget.intentIds.map((intentId) => ({
             intentId,
@@ -763,7 +811,7 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
             } catch (error) {
               throw new OrchestrationError('invalid_refinement', 'Previous catalog results could not be revalidated.', error);
             }
-            if (JSON.stringify(trusted) !== JSON.stringify(ranked.product)) {
+            if (!isDeepStrictEqual(trusted, ranked.product)) {
               throw new OrchestrationError('invalid_refinement', 'Previous catalog results do not match the trusted catalog.');
             }
           }
@@ -826,6 +874,22 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
               message: /[\u0590-\u05ff]/u.test(promptResult.data) ? 'מחירי הקטלוג הם בדולר ולא ניתן לבצע המרת מטבע. יש לציין את התקציב לבקשה הזאת בדולר.' : 'Catalog prices are in USD and currency conversion is not available. Please provide this intent\'s budget in USD.',
               retryable: false,
             },
+          };
+        }
+        if (intent.status === 'needs_clarification' && requiresCheaperPriceClarification
+          && intent.constraints.category) {
+          if (intent.constraints.maxPrice === 0) {
+            return { intent: { ...intent, status: 'completed' }, products: [] };
+          }
+          const priorProducts = previous.get(intent.id)?.products ?? [];
+          return {
+            intent,
+            products: [],
+            clarification: cheaperPriceClarification(
+              priorProducts,
+              /[\u0590-\u05ff]/u.test(promptResult.data),
+              intent.constraints.maxPrice,
+            ),
           };
         }
         if (intent.status === 'needs_clarification' && !intent.constraints.category) {
@@ -987,7 +1051,7 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
       return {
         turnId: input.turnId,
         status: turnStatus(outcomes),
-        response: evidenceAwareResponse(promptResult.data, outcomes, isHebrew),
+        response: evidenceAwareResponse(promptResult.data, settled.length > 0 ? settled : outcomes, isHebrew),
         outcomes,
       };
     },

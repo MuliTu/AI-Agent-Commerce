@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import type { OrchestrationResult } from '../orchestration/contracts';
 import type { ConversationMemoryState, IntentOperation } from '../persistence';
 
@@ -100,8 +101,13 @@ function inferOperation(
   selectedProduct: boolean,
 ): IntentOperation {
   if (selectedProduct) return 'select_product';
-  if (result.outcomes.some(({ intent }) => intent.status === 'needs_clarification')) return 'clarify';
-  if (!previous) return 'add';
+  if (!previous) {
+    return result.outcomes.some(({ intent }) => intent.status === 'needs_clarification') ? 'clarify' : 'add';
+  }
+  const previousById = new Map(previous.outcomes.map((outcome) => [outcome.intent.id, outcome]));
+  const changedOutcomes = result.outcomes.filter((outcome) =>
+    !isDeepStrictEqual(previousById.get(outcome.intent.id), outcome));
+  if (changedOutcomes.some(({ intent }) => intent.status === 'needs_clarification')) return 'clarify';
   const previousIds = new Set(previous.outcomes.map(({ intent }) => intent.id));
   const resultIds = new Set(result.outcomes.map(({ intent }) => intent.id));
   const retained = [...resultIds].some((id) => previousIds.has(id));
@@ -120,6 +126,9 @@ export function nextConversationMemoryState(input: {
 }): ConversationMemoryState {
   const selectedProduct = input.context.displayedProductReference?.selectionOnly === true;
   const operation = inferOperation(input.context.previous, input.result, selectedProduct);
+  const previousById = new Map(input.context.previous?.outcomes.map((outcome) => [outcome.intent.id, outcome]) ?? []);
+  const changedOutcomes = input.result.outcomes.filter((outcome) =>
+    !isDeepStrictEqual(previousById.get(outcome.intent.id), outcome));
   const unboundedActiveResult = operation === 'select_product'
     ? input.context.previous
     : operation === 'clarify' && input.context.previous
@@ -135,8 +144,9 @@ export function nextConversationMemoryState(input: {
   const activeResult = unboundedActiveResult && unboundedActiveResult.outcomes.length > MAX_ACTIVE_CONVERSATION_INTENTS
     ? { ...unboundedActiveResult, outcomes: unboundedActiveResult.outcomes.slice(-MAX_ACTIVE_CONVERSATION_INTENTS) }
     : unboundedActiveResult;
-  const focusCandidates = input.result.outcomes.filter(({ intent }) =>
+  const focusCandidates = changedOutcomes.filter(({ intent }) =>
     intent.status !== 'failed' && intent.status !== 'needs_clarification');
+  const clarificationFocus = changedOutcomes.find(({ intent }) => intent.status === 'needs_clarification')?.intent.id;
   const focus = selectedProduct
     ? input.context.displayedProductReference?.intentId
     : focusCandidates.length === 1
@@ -145,7 +155,7 @@ export function nextConversationMemoryState(input: {
         ? focusCandidates.find(({ intent }) => !input.context.previous?.outcomes
           .some(({ intent: previousIntent }) => previousIntent.id === intent.id))?.intent.id
         : operation === 'clarify'
-          ? input.context.currentFocusIntentId
+          ? clarificationFocus ?? input.context.currentFocusIntentId
           : undefined;
   return {
     conversationId: input.conversationId,

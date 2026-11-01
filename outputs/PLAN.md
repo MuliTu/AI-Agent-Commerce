@@ -226,7 +226,7 @@ Execute the five bounded tasks in `QA_REMEDIATION_TASKS_2026-10-30.md`, integrat
 
 1. Reproduce phone → “Also show me perfumes under $100” → “Show me cheaper options” with a deterministic three-turn regression.
 2. Prevent an unmatched explicit new category from being rebound to the sole prior intent; preserve prior outcomes only when the prompt explicitly marks the new topic as additive.
-3. Clarify the target for a category-free constraint follow-up when both preserved topics remain active; keep `cheaper` defined as price-ascending ordering without inventing a price ceiling.
+3. Clarify the target for a category-free comparative follow-up when both preserved topics remain active; after the category is known, require an explicit maximum price unless a displayed product supplies a trustworthy comparison baseline.
 4. Add opt-in structured server diagnostics for request, plan, target decision, search constraints, results and errors, correlated without exposing credentials or full provider/catalog envelopes.
 5. Verify summary versus bounded development-only verbose logging, run full checks, and leave all existing conversations untouched.
 
@@ -242,7 +242,7 @@ Execute the five bounded tasks in `QA_REMEDIATION_TASKS_2026-10-30.md`, integrat
 1. Add an additive SQLite migration for versioned conversation state and bounded decision events; do not rewrite existing rows.
 2. Centralize context projection so runtime context comes from server persistence rather than the client-supplied `previous` payload.
 3. Persist explicit add/replace/refine/clarify/select-product transitions and an unambiguous focus in the same completion transaction.
-4. Resolve displayed ordinals from stored result order; bypass the LLM for selection-only turns, validate and enforce the referenced intent/category for compound turns, and treat comparative `cheaper` as a strict saved-price boundary while leaving generic `cheap` as sorting only.
+4. Resolve displayed ordinals from stored result order; bypass the LLM for selection-only turns, validate and enforce the referenced intent/category for compound turns, treat comparative `cheaper` as a strict saved-price boundary, request `maxPrice` when that boundary is absent, and leave generic `cheap` as sorting only.
 5. Make explicit price ordering authoritative through semantic reranking without inventing a new budget.
 6. Persist catalog tool input summaries and returned product IDs, with no raw provider or secret-bearing payloads.
 7. Verify migration compatibility, restart recovery, idempotent retry, additive multi-intent behavior, ordinal selection, price order, static checks, build and browser regression gates.

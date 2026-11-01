@@ -229,11 +229,11 @@ This log records current decisions and proposals. “Accepted” means accepted 
 
 ## D-17 — Price intent outranks semantic relevance
 
-**Decision:** When the shopper asks for `cheap`, `cheaper` or `cheapest`, deterministic price ascending is the primary order, including after semantic evaluation. No lower ceiling is invented without an explicit budget.
+**Decision:** `cheap` and `cheapest` request deterministic price-ascending ordering, including after semantic evaluation. Comparative `cheaper` requires either a deterministically selected product or an explicit maximum price; otherwise the application asks for the missing price threshold rather than presenting a re-sorted list as a comparison.
 
 **Why:** Relevance-tier ordering could make a more expensive item appear first and make a valid cheaper request look unchanged. Inventing a maximum price imposes a preference the shopper did not state.
 
-**Selected-product comparison:** When “cheaper” explicitly refers to a deterministically resolved displayed product, its persisted price is an observed comparison baseline rather than an invented budget. Results must be strictly below that price and exclude the selected product; an existing or explicit tighter maximum still applies. Generic “cheap” without a selected baseline remains price ordering only.
+**Selected-product comparison:** When “cheaper” explicitly refers to a deterministically resolved displayed product, its persisted price is an observed comparison baseline rather than an invented budget. Results must be strictly below that price and exclude the selected product; an existing or explicit tighter maximum still applies. Without that selected baseline, `cheaper` produces a `maxPrice` clarification. Generic “cheap” remains price ordering only.
 
 **Alternative:** Exclude all previously displayed products or derive a budget from their median. Rejected because both rules are surprising and can hide the only valid products.
 

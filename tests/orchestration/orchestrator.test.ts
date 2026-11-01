@@ -72,6 +72,29 @@ function catalog(search = vi.fn(async ({ query }: { query: string }) =>
 }
 
 describe('single-agent multi-intent orchestration', () => {
+  it('revalidates an unchanged catalog product independently of object property order', async () => {
+    const client = catalog();
+    client.getProduct = vi.fn(async (id: number) => {
+      const original = [phone, fragrance, plates].find((candidate) => candidate.id === id);
+      if (!original) throw new CatalogError('http', 'not found', { endpoint: `/products/${id}`, status: 404 });
+      return Object.fromEntries(Object.entries(original).reverse()) as Product;
+    });
+    const orchestrator = createIntentOrchestrator({
+      catalog: client,
+      extractIntents: async ({ prompt }) => prompt.startsWith('Find') ? ({
+        response: 'phone', intents: [{ goal: 'phone', query: 'phone', constraints: { category: 'smartphones' } }],
+      }) : ({
+        response: 'perfume', intents: [{ goal: 'perfume', query: 'perfume', constraints: { category: 'fragrances' } }],
+      }),
+    });
+    const first = await orchestrator.run({ turnId: 'order-1', conversationId: 'order', prompt: 'Find phone' });
+    const second = await orchestrator.run({
+      turnId: 'order-2', conversationId: 'order', prompt: 'Also find perfume', previous: first,
+    });
+
+    expect(second.outcomes.map(({ intent }) => intent.constraints.category)).toEqual(['smartphones', 'fragrances']);
+  });
+
   function ordinalCatalogProducts() {
     const firstPhone: Product = { ...phone, id: 101, title: 'Alpha Phone', price: 500 };
     const secondPhone: Product = { ...phone, id: 102, title: 'Beta Phone', price: 300 };
