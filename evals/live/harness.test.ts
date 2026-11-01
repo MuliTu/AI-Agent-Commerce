@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { relative } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { withCatalogCapture } from './catalog-capture';
+import { evaluateObjectiveAssertions } from './assertions';
 import { createIsolatedDatabasePath, liveEvaluationInternals } from './runner';
 
 const nativeFetch = globalThis.fetch;
@@ -63,7 +64,50 @@ describe('live evaluation harness mechanics', () => {
     )).toBe(true);
   });
 
-  it('captures exact catalog URL arguments, attempts, status, raw output, IDs, and prices', async () => {
+  it('fails comparative affordability when the same set is merely price-sorted without a baseline or clarification', () => {
+    const products = [
+      { id: 1, title: 'Phone A', price: 100, category: 'smartphones' },
+      { id: 2, title: 'Phone B', price: 200, category: 'smartphones' },
+    ];
+    const assertions = evaluateObjectiveAssertions({
+      turn: { id: 'comparative', prompt: 'make those more affordable', expected: { comparativeAffordability: { baselinePrice: null } } },
+      result: {
+        turnId: 'turn-2', status: 'completed', response: 'Sorted by price.',
+        outcomes: [{
+          intent: { id: 'phone', goal: 'phones', query: 'phones', constraints: { sort: 'price_asc' }, status: 'completed' },
+          products: products.map((product) => ({ product: product as never, score: 1, matchReasons: [] })),
+        }],
+      },
+      stateAfter: { conversationId: 'c', revision: 2, lastTurnId: 'turn-2', updatedAt: 'now', lastOperation: 'refine' },
+      catalogCalls: [{
+        sequence: 0, requestOccurrence: 1, url: 'https://dummyjson.com/products/category/smartphones', method: 'GET', pathname: '/products/category/smartphones', query: {}, startedAt: 'now', completedAt: 'now', status: 200, ok: true, rawOutput: { products }, returnedProducts: products, error: null,
+      }],
+      catalogCaptureComplete: true,
+      snapshots: [{ id: 's', turnId: 'turn-2', intentId: 'phone', products: products as never, createdAt: 'now' }],
+      persistenceRecovered: true,
+    });
+    expect(assertions).toContainEqual(expect.objectContaining({ id: 'comparative-affordability-resolution', status: 'FAIL' }));
+  });
+
+  it('does not apply comparative-baseline rules to a non-comparative cheap request', () => {
+    const products = [{ id: 1, title: 'Phone A', price: 100, category: 'smartphones' }];
+    const assertions = evaluateObjectiveAssertions({
+      turn: { id: 'cheap', prompt: 'show cheap phones', expected: {} },
+      result: {
+        turnId: 'turn-1', status: 'completed', response: 'Catalog phones.',
+        outcomes: [{ intent: { id: 'phone', goal: 'cheap phones', query: 'cheap phones', constraints: { sort: 'price_asc' }, status: 'completed' }, products: products.map((product) => ({ product: product as never, score: 1, matchReasons: [] })) }],
+      },
+      stateAfter: { conversationId: 'c', revision: 1, lastTurnId: 'turn-1', updatedAt: 'now', lastOperation: 'add' },
+      catalogCalls: [{ sequence: 0, requestOccurrence: 1, url: 'https://dummyjson.com/products', method: 'GET', pathname: '/products', query: {}, startedAt: 'now', completedAt: 'now', status: 200, ok: true, rawOutput: { products }, returnedProducts: products, error: null }],
+      catalogCaptureComplete: true,
+      snapshots: [{ id: 's', turnId: 'turn-1', intentId: 'phone', products: products as never, createdAt: 'now' }],
+      persistenceRecovered: true,
+    });
+    expect(assertions.some(({ id }) => id === 'comparative-affordability-resolution')).toBe(false);
+    expect(assertions.every(({ status }) => status === 'PASS')).toBe(true);
+  });
+
+  it('captures exact catalog URL arguments, request occurrences, status, raw output, IDs, and prices', async () => {
     globalThis.fetch = vi.fn(async () => Response.json({
       products: [{ id: 7, title: 'Catalog Phone', price: 42, category: 'smartphones' }],
       total: 1,

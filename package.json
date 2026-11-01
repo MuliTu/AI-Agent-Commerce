@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "eval:live": "vitest run --config vitest.live-eval.config.mts",
+    "eval:reassess": "vitest run --config vitest.reassess.config.mts",
     "test:eval-harness": "vitest run --config vitest.eval-harness.config.mts",
     "test:watch": "vitest",
     "check": "npm run lint && npm run typecheck && npm test"

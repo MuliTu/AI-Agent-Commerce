@@ -14,7 +14,7 @@ export const liveEvaluationScenarios: EvaluationScenario[] = [
       {
         id: 'implicit-refinement',
         prompt: 'Could you make those more affordable and keep the strongest matches first?',
-        expected: { outcomeCount: { min: 1 }, returnedProductCount: { min: 1 }, catalogSearches: 'required', stateOperation: 'refine' },
+        expected: { outcomeCount: { min: 1 }, returnedProductCount: { min: 1 }, catalogSearches: 'required', stateOperation: 'refine', comparativeAffordability: { baselinePrice: null } },
       },
       {
         id: 'switch-topic',

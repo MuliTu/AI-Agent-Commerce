@@ -70,6 +70,12 @@ export function evaluateObjectiveAssertions(input: AssertionInput): ObjectiveAss
     checks.push(check('completed-outcomes-return-products', completed.length > 0 && completed.every(({ products: outcomeProducts }) => outcomeProducts.length > 0), `completed outcomes=${completed.length}; product counts=${completed.map(({ products: outcomeProducts }) => outcomeProducts.length).join(', ')}`));
   }
   if (expected.returnedProductCount) checks.push(check('minimum-returned-products', products.length >= expected.returnedProductCount.min, `expected >=${expected.returnedProductCount.min}, actual ${products.length}`));
+  if (expected.comparativeAffordability) {
+    const baseline = expected.comparativeAffordability.baselinePrice;
+    checks.push(baseline === null
+      ? check('comparative-affordability-resolution', clarifications.length > 0, 'No reliable single-product price baseline exists; comparative affordability requires an explicit clarification.')
+      : check('comparative-affordability-resolution', products.length > 0 && products.every(({ price }) => price < baseline), `Every returned product must be strictly cheaper than the trusted baseline ${baseline}; actual prices ${products.map(({ price }) => price).join(', ') || 'none'}.`));
+  }
   if (expected.clarification === 'required') checks.push(check('clarification-required', clarifications.length > 0, `actual clarification count ${clarifications.length}`));
   if (expected.clarification === 'forbidden') checks.push(check('clarification-forbidden', clarifications.length === 0, `actual clarification count ${clarifications.length}`));
   if (expected.catalogSearches === 'required') checks.push(input.catalogCaptureComplete ? check('catalog-search-required', catalogSearches.length > 0, `captured product search/list calls ${catalogSearches.length}; all catalog HTTP calls ${input.catalogCalls.length}`) : assertion('catalog-search-required', 'INCONCLUSIVE', 'Catalog boundary capture was incomplete.'));

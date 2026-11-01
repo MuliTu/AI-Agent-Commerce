@@ -22,6 +22,9 @@ export type ObjectiveExpectation = {
   selectedProductFromPreviousDisplay?: boolean;
   focusCategory?: string;
   activeCategoriesExclude?: string[];
+  comparativeAffordability?: {
+    baselinePrice: number | null;
+  };
 };
 
 export type EvaluationTurn = {
