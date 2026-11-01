@@ -40,6 +40,7 @@ export type ConversationContext = {
     categories: string[];
     missingCategories?: string[];
     reason: 'missing_position' | 'ambiguous_group';
+    groups: DisplayGroupReference[];
   };
   pausedOutcomes?: OrchestrationResult['outcomes'];
   selectedProducts?: ConversationMemoryState['selectedProducts'];
@@ -164,7 +165,7 @@ export function buildConversationContext(input: {
     previous, stateRevision: input.persistedState?.revision ?? 0,
     currentFocusIntentId: input.persistedState?.currentFocusIntentId,
     pausedOutcomes: input.persistedState?.pausedOutcomes, selectedProducts: input.persistedState?.selectedProducts, displayGroups,
-    ordinalResolutionIssue: { position, categories: candidates.map(({ category, intentId }) => category ?? intentId), reason: 'ambiguous_group' },
+    ordinalResolutionIssue: { position, categories: candidates.map(({ category, intentId }) => category ?? intentId), reason: 'ambiguous_group', groups: candidates },
   };
   if (wantsAll && candidates.length > 1) {
     const missing = candidates.filter(({ outcome }) => !outcome.products[position]);
@@ -178,6 +179,7 @@ export function buildConversationContext(input: {
         categories: candidates.map(({ category, intentId }) => category ?? intentId),
         missingCategories: missing.map(({ category, intentId }) => category ?? intentId),
         reason: 'missing_position',
+        groups: candidates,
       },
     };
     const groups = candidates.map((group) => ({ group, product: group.outcome.products[position].product }));
@@ -201,7 +203,7 @@ export function buildConversationContext(input: {
       pausedOutcomes: input.persistedState?.pausedOutcomes,
       selectedProducts: input.persistedState?.selectedProducts,
       displayGroups,
-      ordinalResolutionIssue: { position, categories: candidates.map(({ category, intentId }) => category ?? intentId), reason: productOutcomes.length > 1 ? 'ambiguous_group' : 'missing_position' },
+      ordinalResolutionIssue: { position, categories: candidates.map(({ category, intentId }) => category ?? intentId), reason: productOutcomes.length > 1 ? 'ambiguous_group' : 'missing_position', groups: candidates },
     };
   }
   const outcome = productOutcomes[0];
@@ -292,7 +294,15 @@ export function nextConversationMemoryState(input: {
   const newlyPaused = input.context.previous?.outcomes.filter(({ intent }) => pauseIds.has(intent.id)) ?? [];
   const resultIntentIds = new Set(input.result.outcomes.map(({ intent }) => intent.id));
   const hasStateMutation = pauseIds.size > 0 || resumeIds.size > 0;
-  const unboundedActiveResult = operation === 'select_product'
+  const nonMutatingFailure = Boolean(input.context.previous)
+    && input.result.outcomes.length > 0
+    && input.result.outcomes.every(({ intent, error }) => intent.status === 'failed'
+      && error?.retryable === false
+      && ['unsupported_constraint', 'outside_product_catalog', 'unknown_catalog_category', 'unsupported_currency'].includes(error.code));
+  const preserveActiveResult = input.result.stateActions?.preserveActiveResult === true;
+  const unboundedActiveResult = (nonMutatingFailure || preserveActiveResult)
+    ? input.context.previous
+    : operation === 'select_product'
     ? input.context.previous
     : operation === 'clarify' && input.context.previous
       ? {
@@ -333,6 +343,7 @@ export function nextConversationMemoryState(input: {
   const clarificationFocus = activeChangedOutcomes.find(({ intent }) => intent.status === 'needs_clarification')?.intent.id;
   const proposedFocus = selectedProduct
     ? input.context.displayedProductReference?.intentId
+      ?? input.result.stateActions?.resolvedDisplayedSelection?.[0]?.intentId
     : focusCandidates.length === 1
       ? focusCandidates[0].intent.id
       : operation === 'add'
@@ -341,7 +352,7 @@ export function nextConversationMemoryState(input: {
         : operation === 'clarify'
           ? clarificationFocus ?? (input.context.currentFocusIntentId
             && activeIntentIds.has(input.context.currentFocusIntentId) ? input.context.currentFocusIntentId : undefined)
-          : hasStateMutation && input.context.currentFocusIntentId
+          : (hasStateMutation || nonMutatingFailure || preserveActiveResult) && input.context.currentFocusIntentId
             && activeIntentIds.has(input.context.currentFocusIntentId) ? input.context.currentFocusIntentId : undefined;
   const focus = proposedFocus && activeIntentIds.has(proposedFocus) ? proposedFocus : undefined;
   return {
@@ -367,6 +378,7 @@ export function nextConversationMemoryState(input: {
         selectedAtTurnId: input.turnId,
       }] : []),
       ...(input.context.displayedProductSelection?.groups.map(({ group, product }) => ({ intentId: group.intentId, position: input.context.displayedProductSelection!.position, product, selectedAtTurnId: input.turnId })) ?? []),
+      ...(input.result.stateActions?.resolvedDisplayedSelection?.map(({ intentId, position, product }) => ({ intentId, position, product, selectedAtTurnId: input.turnId })) ?? []),
     ].slice(-8),
   };
 }

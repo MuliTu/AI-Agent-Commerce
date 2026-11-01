@@ -79,6 +79,7 @@ export type OrchestrateTurnInput = {
   clarification?: ClarificationAnswer;
   displayedProductReference?: IntentExtractionContext['displayedProductReference'];
   pausedOutcomes?: IntentOutcome[];
+  priceConstraintRepair?: { targetIntentId: string; targetCategory: string; maxPrice: number };
 };
 
 const SEMANTIC_RERANK_TIMEOUT_MS = 8_000;
@@ -328,8 +329,8 @@ function constraintIssueMessage(issue: ConstraintSemanticIssue, isHebrew: boolea
         : 'Minimum-price filtering is not supported. Please provide a maximum price instead.';
     case 'contradictory_price':
       return isHebrew
-        ? `מחיר המינימום $${issue.minPrice} סותר את המחיר המרבי $${issue.maxPrice}. איזה גבול תרצה לשנות?`
-        : `The minimum price of $${issue.minPrice} conflicts with the maximum price of $${issue.maxPrice}. Which bound should I change?`;
+        ? `מחיר המינימום $${issue.minPrice} סותר את המחיר המרבי $${issue.maxPrice}. סינון לפי מחיר מינימום אינו נתמך; יש לשלוח מחיר מרבי אחד.`
+        : `The minimum price of $${issue.minPrice} conflicts with the maximum price of $${issue.maxPrice}. Minimum-price filtering is not supported; provide one maximum price.`;
     case 'aggregate_budget':
       return isHebrew
         ? 'תקציב משותף למספר מוצרים אינו נתמך כרגע. אפשר לציין תקציב מרבי נפרד לכל מוצר.'
@@ -398,9 +399,56 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
         if (blockingIssues.length > 0) {
           const isHebrew = /[\u0590-\u05ff]/u.test(promptResult.data);
           const message = blockingIssues.map((issue) => constraintIssueMessage(issue, isHebrew)).join(' ');
+          const contradiction = blockingIssues.length === 1 && blockingIssues[0].kind === 'contradictory_price'
+            ? blockingIssues[0]
+            : undefined;
+          const targetCategory = contradiction
+            ? resolveCatalogCategory(undefined, promptResult.data, availableCategories)
+            : undefined;
+          const targetOutcomes = targetCategory
+            ? previousOutcomes.filter(({ intent }) => intent.constraints.category === targetCategory)
+            : [];
+          if (contradiction?.minPrice !== undefined && contradiction.maxPrice !== undefined
+            && targetCategory && targetOutcomes.length === 1) {
+            const selectorIntentId = `${input.turnId}:price-repair`;
+            const question = isHebrew
+              ? `הסינון לפי מחיר מינימום אינו נתמך עבור ${targetCategory}. אפשר להשתמש במחיר מרבי של $${contradiction.maxPrice}, או לשלוח מחיר מרבי אחר.`
+              : `Minimum-price filtering is not supported for ${targetCategory}. Use the $${contradiction.maxPrice} maximum, or provide a different maximum price.`;
+            return {
+              turnId: input.turnId,
+              status: 'partial',
+              response: question,
+              outcomes: [{
+                intent: {
+                  id: selectorIntentId,
+                  goal: isHebrew ? `תיקון תקציב עבור ${targetCategory}` : `Repair the ${targetCategory} budget`,
+                  query: promptResult.data,
+                  constraints: { category: targetCategory, maxPrice: contradiction.maxPrice },
+                  status: 'needs_clarification',
+                },
+                products: [],
+                clarification: {
+                  field: 'maxPrice',
+                  question,
+                  options: [`Use maximum $${contradiction.maxPrice}`, 'Enter a different maximum price'],
+                  reason: 'requested',
+                },
+              }],
+              stateActions: {
+                pauseIntentIds: [], resumeIntentIds: [], preserveActiveResult: true,
+                pendingPriceConstraintRepair: {
+                  kind: 'contradictory_price', selectorIntentId,
+                  targetIntentId: targetOutcomes[0].intent.id,
+                  targetCategory,
+                  minPrice: contradiction.minPrice,
+                  maxPrice: contradiction.maxPrice,
+                },
+              },
+            };
+          }
           const intent: ShoppingIntent = {
             id: `${input.turnId}:intent:1`,
-            goal: isHebrew ? 'הבהרת תנאי קנייה' : 'Clarify unsupported shopping constraints',
+            goal: isHebrew ? 'תנאי קנייה שאינו נתמך' : 'Unsupported shopping filter',
             query: promptResult.data,
             constraints: {},
             status: 'failed',
@@ -427,7 +475,22 @@ export function createIntentOrchestrator(options: IntentOrchestratorOptions) {
       if (input.retryIntentId && input.clarification) {
         throw new OrchestrationError('invalid_refinement', 'A turn cannot retry and clarify at the same time.');
       }
-      if (input.retryIntentId) {
+      if (input.priceConstraintRepair) {
+        const target = previous.get(input.priceConstraintRepair.targetIntentId);
+        if (!target || target.intent.constraints.category !== input.priceConstraintRepair.targetCategory) {
+          throw new OrchestrationError('invalid_refinement', 'The saved price repair target is not an active matching intent.');
+        }
+        plan = extractedTurnPlanSchema.parse({
+          response: `I applied the $${input.priceConstraintRepair.maxPrice} maximum to ${input.priceConstraintRepair.targetCategory}.`,
+          intents: [{
+            intentId: target.intent.id,
+            constraints: { ...target.intent.constraints, maxPrice: input.priceConstraintRepair.maxPrice },
+            status: 'ready',
+          }],
+          operations: [{ op: 'refine_intent', intentIndex: 0, intentId: target.intent.id }],
+          priceSemantics: [{ kind: 'none' }],
+        });
+      } else if (input.retryIntentId) {
         const retry = previous.get(input.retryIntentId);
         if (!retry || retry.intent.status !== 'failed' || !retry.error?.retryable) {
           throw new OrchestrationError('invalid_refinement', 'Only a retryable failed intent from the previous turn can be retried.');

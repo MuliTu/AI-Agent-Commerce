@@ -62,6 +62,15 @@ describe('constraint semantics', () => {
       });
   });
 
+  it('does not treat separately currency-scoped category budgets as one ambiguous budget', () => {
+    expect(analyzeConstraintSemantics('Find a laptop under ₪3,000 and a fragrance under $60', categories))
+      .toMatchObject({ budgetScope: 'single', issues: [] });
+  });
+
+  it('keeps multiple unassigned currency amounts ambiguous', () => {
+    expect(analyzeConstraintSemantics('Find a laptop and a fragrance, budgets $300 and $60', categories).budgetScope).toBe('ambiguous');
+  });
+
   it('recognizes explicit Hebrew per-item scope', () => {
     expect(analyzeConstraintSemantics('טלפון ובושם, כל אחד עד 300 דולר', categories))
       .toMatchObject({ status: 'supported', budgetScope: 'each', issues: [] });

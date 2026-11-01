@@ -117,7 +117,8 @@ function matchingSegments(
   if (intentCount === 1) return segments;
   const contextTokens = new Set(normalize(context).split(/\s+/u).filter((token) => token.length > 2));
   return segments.filter((segment) => {
-    if (category && resolveCatalogCategory(undefined, segment, availableCategories) === category) return true;
+    const segmentCategory = resolveCatalogCategory(undefined, segment, availableCategories);
+    if (category && segmentCategory) return segmentCategory === category;
     return normalize(segment).split(/\s+/u).some((token) => token.length > 2 && contextTokens.has(token));
   });
 }

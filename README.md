@@ -11,21 +11,22 @@ It can handle requests such as:
 
 The language model helps understand the request. It is **not** allowed to invent products, prices, IDs, or HTML. Product facts come from DummyJSON and are checked by application code.
 
-## Run locally
+## Run locally: install and start
 
-You need Node.js 22.13 or newer and npm.
+You need:
+
+- Node.js 22.13 or newer and npm.
+- Network access to `dummyjson.com` for real catalog searches.
+- For real shopping conversations, the assignment OpenAI key. The UI can still start without it, but shopping requests intentionally return a configuration error.
 
 ```bash
 git clone https://github.com/MuliTu/AI-Agent-Commerce.git
 cd AI-Agent-Commerce
 npm ci
 cp .env.example .env
-npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
-
-The safe default is `LLM_PROVIDER=disabled`; shopping requests then fail honestly instead of using a fake model. To use the assignment model, put the server-only values supplied for the assignment in the ignored `.env` file:
+The copied file uses the safe default `LLM_PROVIDER=disabled`; shopping requests then fail honestly instead of using a fake model. For real shopping, replace that provider section in the ignored `.env` file with all four active lines below, then replace the placeholder key:
 
 ```text
 LLM_PROVIDER=openai
@@ -35,6 +36,28 @@ LLM_BASE_URL=https://api.openai.com/v1
 ```
 
 Never use a `NEXT_PUBLIC_*` name for a secret and never commit `.env`.
+
+Start the development server:
+
+```bash
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000). For a production-mode local check, run `npm run build` followed by `npm run start`.
+
+### Environment variables
+
+| Variable | Required? | Meaning |
+| --- | --- | --- |
+| `LLM_PROVIDER` | Yes | `disabled`, `openai`, or the local-only `litellm` option shown in `.env.example`. |
+| `LLM_API_KEY` | When a provider is enabled | Server-only provider credential. Never expose it with `NEXT_PUBLIC_*`. |
+| `LLM_MODEL` | No | With OpenAI, defaults to and accepts only `gpt-5.4-mini`. |
+| `LLM_BASE_URL` | No | With OpenAI, defaults to and accepts only `https://api.openai.com/v1`. |
+| `BAZAK_DATABASE_PATH` | No | SQLite path; defaults to `var/data/commerce.sqlite`. |
+| `BAZAK_SERVER_DIAGNOSTICS` | No | Development-only `off`, `summary`, or `verbose`; production forces diagnostics off. |
+| `BAZAK_EVAL_ARTIFACT_DIR` | Only for a named live-eval output | Ignored local directory for reproducible evaluation evidence. |
+
+The assignment allowed `gpt-5.4-mini` and `gpt-5.4-nano`; this repository deliberately validates and uses `gpt-5.4-mini`. The application does not silently switch models. The assignment key may expire after the deadline; obtain a valid replacement from the reviewer rather than committing another key.
 
 Conversation data defaults to `var/data/commerce.sqlite`. To use a separate database:
 
@@ -130,19 +153,20 @@ The live harness uses a unique temporary SQLite database and records each turn, 
 
 Completed catalog boundaries are persisted as sanitized `tool_runs`. Uniform retry for initial calls remains deferred; the implemented explicit failed-intent retry is a separate bounded path.
 
-Latest verified deterministic gate on the merged candidate:
+Latest verified deterministic gate on the current candidate:
 
-- 418/418 Vitest tests passed.
+- 424/424 Vitest tests passed.
 - 11/11 harness-mechanics tests passed.
 - Production build passed.
 - 35/35 Playwright tests passed.
-- Product commit `3ed708c` passed GitHub CI; its documentation-only successor must also pass CI.
+- The exact uncommitted repair candidate was also checked by independent QA and architecture review before commit.
 
 Latest live evidence must be read as samples, not a reliability percentage:
 
 - The full service-level sample passed 27/30 turns. Two failures were judge-only response-copy failures; one was an execution failure.
 - A five-scenario real-browser sample passed 4/5 and exposed a lost multi-intent budget state.
-- A later targeted post-merge browser run of that budget flow passed once with a verified isolated database. It proves the successful path works; it does not erase the earlier failure or prove stability.
+- A later targeted browser run of that budget flow passed once with a verified isolated database.
+- A final targeted real-browser run verified natural confirmation (`Yes, use $500`) against OpenAI `gpt-5.4-mini` and live DummyJSON. It retained the saved laptop target and preserved the fragrance result. These successful samples do not erase earlier failures or prove a reliability percentage.
 
 Ignored local evidence is under `var/evaluations/live-ai/`. It is intentionally not committed because it may contain full prompts and catalog data.
 
@@ -164,7 +188,7 @@ Ignored local evidence is under `var/evaluations/live-ai/`. It is intentionally 
 
 ## What I would change with another week
 
-I would first add raw-plan diagnostics around every validation path and a deterministic guard that reconstructs an ambiguous multi-product budget from trusted prompt/category evidence even when the model plan shape changes. Then I would replace process-bound SQLite execution with a durable database and queue/worker lease, add fault-injection for initial retries, calibrate semantic evaluation on a labelled dataset, and complete a keyboard and screen-reader audit.
+I would first add raw-plan diagnostics around every validation path and expand the structured clarification contracts to more natural answer phrasings and currencies. Then I would replace process-bound SQLite execution with a durable database and queue/worker lease, add fault-injection for initial retries, calibrate semantic evaluation on a labelled dataset, and complete a keyboard and screen-reader audit.
 
 ## Assignment map and study guide
 

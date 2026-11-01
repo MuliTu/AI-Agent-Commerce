@@ -5,8 +5,9 @@ import type { ClarificationAnswer } from '../orchestration/contracts';
 import { OrchestrationError } from '../orchestration/orchestrator';
 import { PersistenceConflictError, type CommerceRepository } from '../persistence';
 import type { ConversationState } from '../orchestration/http';
-import { buildConversationContext, nextConversationMemoryState } from './conversation-context';
+import { buildConversationContext, nextConversationMemoryState, type DisplayGroupReference } from './conversation-context';
 import type { OrchestrationDecisionDiagnostic } from '../diagnostics/server-trace';
+import { explicitUsdMaxPrice } from '../orchestration/category-resolution';
 
 type BoundedDisplayedProductReference = {
   referenceId: string;
@@ -30,9 +31,129 @@ type RunInput = {
   displayedProductReference?: BoundedDisplayedProductReference;
   pausedOutcomes?: OrchestrationResult['outcomes'];
   observeDecision?: (event: OrchestrationDecisionDiagnostic) => void;
+  priceConstraintRepair?: { targetIntentId: string; targetCategory: string; maxPrice: number };
 };
 
 export type RunOrchestration = (input: RunInput) => Promise<OrchestrationResult>;
+
+function displayGroupLabel(group: DisplayGroupReference): string {
+  const category = (group.category ?? group.outcome.intent.goal).replace(/-/gu, ' ');
+  const budget = group.outcome.intent.constraints.maxPrice;
+  return `${category}${budget === undefined ? '' : ` under $${budget}`}`;
+}
+
+function displayGroupChoices(groups: DisplayGroupReference[]): Array<{ group: DisplayGroupReference; label: string }> {
+  const base = groups.map((group) => displayGroupLabel(group));
+  return groups.map((group, index) => ({
+    group,
+    label: base.filter((label) => label === base[index]).length === 1
+      ? base[index]
+      : `${base[index]} — displayed list ${index + 1}`,
+  }));
+}
+
+function resolvePendingDisplayedSelection(input: {
+  clarification?: ClarificationAnswer;
+  previous?: OrchestrationResult;
+  displayGroups: DisplayGroupReference[];
+  turnId: string;
+  stateRevision: number;
+}): OrchestrationResult | undefined {
+  const pending = input.previous?.stateActions?.pendingDisplayedSelection;
+  if (!pending || !input.clarification || input.clarification.intentId !== pending.selectorIntentId) return undefined;
+  if (input.clarification.field !== 'query' || input.stateRevision !== pending.sourceRevision + 1) {
+    throw new OrchestrationError('invalid_refinement', 'This displayed-list clarification is stale or does not match the active question.');
+  }
+  const selected = pending.mode === 'use_available_groups'
+    ? pending.candidates.filter(({ hasPosition }) => hasPosition && input.clarification?.value === 'Use the lists that have this item')
+    : pending.candidates.filter(({ label }) => label === input.clarification?.value);
+  if (selected.length === 0) {
+    if (pending.mode === 'use_available_groups' && input.clarification.value === 'Keep the current displayed results') {
+      return {
+        turnId: input.turnId,
+        status: 'completed',
+        response: 'I kept the current displayed results unchanged.',
+        outcomes: [],
+        stateActions: { pauseIntentIds: [], resumeIntentIds: [], preserveActiveResult: true },
+      };
+    }
+    throw new OrchestrationError('invalid_refinement', 'The clarification answer does not match the saved displayed lists.');
+  }
+  const groups = selected.map((candidate) => input.displayGroups.find(({ groupRef }) => groupRef === candidate.groupRef));
+  if (groups.some((group) => !group || !group.outcome.products[pending.position])) {
+    throw new OrchestrationError('invalid_refinement', 'The saved displayed result is no longer available at that position.');
+  }
+  return {
+    turnId: input.turnId,
+    status: 'completed',
+    response: selected.length > 1
+      ? `Here is option ${pending.position + 1} from each displayed list that has it.`
+      : `Here is option ${pending.position + 1} from ${selected[0].label}.`,
+    outcomes: groups.map((group) => ({
+      ...group!.outcome,
+      intent: { ...group!.outcome.intent, status: 'completed' },
+      products: [group!.outcome.products[pending.position]],
+      clarification: undefined,
+      error: undefined,
+    })),
+    stateActions: {
+      pauseIntentIds: [], resumeIntentIds: [], selectedProduct: true, preserveActiveResult: true,
+      resolvedDisplayedSelection: groups.map((group) => ({
+        intentId: group!.intentId,
+        position: pending.position,
+        product: group!.outcome.products[pending.position].product,
+      })),
+    },
+  };
+}
+
+function resolvePendingPriceRepair(input: {
+  clarification?: ClarificationAnswer;
+  previous?: OrchestrationResult;
+  prompt: string;
+  turnId: string;
+}): { result?: OrchestrationResult; maxPrice?: number; targetCategory?: string } | undefined {
+  const pending = input.previous?.stateActions?.pendingPriceConstraintRepair;
+  if (!pending) return undefined;
+  if (input.clarification && (input.clarification.intentId !== pending.selectorIntentId
+    || input.clarification.field !== 'maxPrice')) {
+    throw new OrchestrationError('invalid_refinement', 'The price clarification does not match the saved repair request.');
+  }
+  if (!input.clarification) {
+    const answerOnlyRemainder = input.prompt
+      .replace(/(?:[$₪€£]\s*)?[0-9]+(?:\.[0-9]+)?/gu, ' ')
+      .replace(/\b(?:use|apply|set|make|maximum|max|price|budget|under|below|at|most|please|the|it|to|of|dollars?|usd|yes|yeah|yep|okay|ok|sure|go|with|choose|option|confirm)\b/giu, ' ')
+      .replace(/(?:השתמש|החל|קבע|מקסימום|מחיר|תקציב|עד|בבקשה|את|זה|דולר(?:ים)?|כן|אוקיי|בסדר|עם|בחר)/gu, ' ')
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .trim();
+    if (answerOnlyRemainder) return undefined;
+  }
+  const answer = input.clarification?.value ?? input.prompt;
+  const maxPrice = explicitUsdMaxPrice(answer)
+    ?? (!input.clarification && /^\s*[0-9]+(?:\.[0-9]+)?\s*$/u.test(answer)
+      ? Number.parseFloat(answer.trim())
+      : undefined);
+  if (maxPrice !== undefined) return { maxPrice, targetCategory: pending.targetCategory };
+  const looksLikeRepairAnswer = Boolean(input.clarification) || /(?:\d|price|maximum|max|budget|מחיר|תקציב)/iu.test(input.prompt);
+  if (!looksLikeRepairAnswer) return undefined;
+  const question = `Minimum-price filtering is not supported for ${pending.targetCategory}. Use the $${pending.maxPrice} maximum, or provide a different maximum price.`;
+  return {
+    result: {
+      ...input.previous!,
+      turnId: input.turnId,
+      status: 'partial',
+      response: question,
+      outcomes: input.previous!.outcomes.map((outcome) => ({
+        ...outcome,
+        intent: { ...outcome.intent, status: 'needs_clarification' },
+        clarification: outcome.intent.id === pending.selectorIntentId
+          ? { field: 'maxPrice', question, options: [`Use maximum $${pending.maxPrice}`, 'Enter a different maximum price'], reason: 'requested' }
+          : undefined,
+      })),
+      stateActions: { ...input.previous!.stateActions!, preserveActiveResult: true },
+    },
+  };
+}
 
 type ExecuteInput = Omit<RunInput, 'observeDecision'>;
 
@@ -218,7 +339,36 @@ export class ConversationExecutionService {
         completedResults,
       });
       const observedDecisions: OrchestrationDecisionDiagnostic[] = [];
-      const result = context.displayedProductSelection
+      const pendingPriceRepair = resolvePendingPriceRepair({
+        clarification: input.clarification,
+        previous,
+        prompt: input.prompt,
+        turnId: input.turnId,
+      });
+      const pendingDisplayedSelection = resolvePendingDisplayedSelection({
+        clarification: input.clarification,
+        previous,
+        displayGroups: context.displayGroups ?? [],
+        turnId: input.turnId,
+        stateRevision: context.stateRevision,
+      });
+      const result = pendingPriceRepair?.result
+        ?? (pendingPriceRepair?.maxPrice !== undefined && pendingPriceRepair.targetCategory
+          ? await this.run({
+              ...input,
+              prompt: `For ${pendingPriceRepair.targetCategory}, use a maximum price of $${pendingPriceRepair.maxPrice}.`,
+              clarification: undefined,
+              priceConstraintRepair: {
+                targetIntentId: previous!.stateActions!.pendingPriceConstraintRepair!.targetIntentId,
+                targetCategory: pendingPriceRepair.targetCategory,
+                maxPrice: pendingPriceRepair.maxPrice,
+              },
+              previous: context.previous,
+              pausedOutcomes: context.pausedOutcomes,
+              observeDecision: (event) => observedDecisions.push(event),
+            })
+          : pendingDisplayedSelection
+        ?? (context.displayedProductSelection
         ? { ...context.displayedProductSelection.result, turnId: input.turnId, stateActions: { pauseIntentIds: [], resumeIntentIds: [], selectedProduct: true } }
         : context.ordinalResolutionIssue
           ? {
@@ -231,9 +381,26 @@ export class ConversationExecutionService {
                 intent: { id: `clarify:${input.turnId}`, goal: 'Clarify displayed product selection', query: input.prompt, constraints: {}, status: 'needs_clarification' as const },
                 products: [],
                 clarification: context.ordinalResolutionIssue.reason === 'missing_position'
-                  ? { field: 'query' as const, reason: 'requested' as const, question: 'Should I search for new results for the missing lists or keep the current displayed results?', options: ['Search for new results', 'Keep the current displayed results'] }
-                  : { field: 'query' as const, reason: 'requested' as const, question: 'Which displayed lists should I use?', options: ['Use the two most recent displayed lists', 'Name the lists'] },
+                  ? { field: 'query' as const, reason: 'requested' as const, question: 'Some displayed lists do not have that position. Use only the lists that do, or leave the display unchanged?', options: ['Use the lists that have this item', 'Keep the current displayed results'] }
+                  : { field: 'query' as const, reason: 'requested' as const, question: 'Which displayed list should I use?', options: displayGroupChoices(context.ordinalResolutionIssue.groups).map(({ label }) => label) },
               }],
+              stateActions: {
+                pauseIntentIds: [],
+                resumeIntentIds: [],
+                preserveActiveResult: true,
+                pendingDisplayedSelection: {
+                  kind: 'displayed_ordinal_selection' as const,
+                  selectorIntentId: `clarify:${input.turnId}`,
+                  position: context.ordinalResolutionIssue.position,
+                  mode: context.ordinalResolutionIssue.reason === 'missing_position' ? 'use_available_groups' as const : 'choose_group' as const,
+                  sourceRevision: context.stateRevision,
+                  candidates: displayGroupChoices(context.ordinalResolutionIssue.groups).map(({ group, label }) => ({
+                    groupRef: group.groupRef,
+                    label,
+                    hasPosition: Boolean(group.outcome.products[context.ordinalResolutionIssue!.position]),
+                  })),
+                },
+              },
             }
           : context.displayedProductReference?.selectionOnly
           ? { ...context.displayedProductReference.result, turnId: input.turnId, stateActions: { pauseIntentIds: [], resumeIntentIds: [], selectedProduct: true } }
@@ -250,7 +417,7 @@ export class ConversationExecutionService {
               },
             } : {}),
             observeDecision: (event) => observedDecisions.push(event),
-          });
+          })));
       if (result.status === 'queued' || result.status === 'running') {
         throw new Error('The orchestration runner returned a non-terminal result.');
       }
